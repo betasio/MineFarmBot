@@ -125,7 +125,7 @@ function requireInventoryForLayer (remainingCells) {
 
 function requireCobblestoneForLayer (layerIndex) {
   const cellsPerLayer = 16 * 16
-  const spineNeeded = layerIndex === 0 ? 0 : 3
+  const spineNeeded = 3
   const conservativeScaffoldNeeded = cfg.removeScaffold ? cellsPerLayer : 0
   const needed = spineNeeded + conservativeScaffoldNeeded
   const cobble = itemCountByName('cobblestone')
@@ -191,6 +191,11 @@ async function gotoAndStand (target) {
 
   const goal = new goals.GoalGetToBlock(target.x, target.y + 1, target.z)
   await bot.pathfinder.goto(goal)
+
+  const standing = bot.entity.position.floored()
+  if (!standing.equals(target)) {
+    throw new Error(`Pathfinder stopped at ${standing.toString()} instead of ${target.toString()}`)
+  }
 
   if (!hasSolidFooting()) {
     throw new Error(`Unsafe footing at ${bot.entity.position.floored().toString()}`)
@@ -320,7 +325,7 @@ function setupMovement () {
 }
 
 function startLagMonitor () {
-  bot.on('time', () => {
+  bot.on('physicsTick', () => {
     const now = Date.now()
     if (lastPhysics != null) {
       const delta = now - lastPhysics
