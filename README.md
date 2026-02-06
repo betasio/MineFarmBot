@@ -6,7 +6,7 @@ Mineflayer-based Minecraft Java bot that builds chunk-aligned cactus farm layers
 
 - Builds exactly **16×16** cactus cells per layer.
 - Uses **3-block vertical spacing** between layers.
-- Configurable layer count (`layers`, default 16).
+- Configurable layer count (`layers`, default 18).
 - Build sequence per cell:
   1. Ensure cobblestone scaffold exists.
   2. Move onto scaffold.
@@ -42,12 +42,25 @@ cp config.example.json config.json
 npm start
 ```
 
+
+## Non-technical quick start
+
+1. Install Node.js (LTS) on Windows.
+2. Put this folder somewhere easy (for example `C:\MineFarmBot`).
+3. Open Command Prompt in the folder.
+4. Run `npm install` once.
+5. Run `copy config.example.json config.json` and edit `config.json` in Notepad.
+6. Set at least: server `host`, `port`, `username`, and farm `origin` / `safePlatform`.
+7. Start with `npm start`.
+
+The bot prints clear stop messages if it detects unsafe movement, missing inventory, or disconnection.
+
 ## Config
 
 `config.json` fields:
 
 - `host`, `port`, `username`, `password`, `auth`, `version`
-- `layers` (number of layers)
+- `layers` (number of layers, recommended 15–20)
 - `buildDelayTicks` (base delay between placements)
 - `removeScaffold` (`true`/`false`)
 - `origin` (`x,y,z`) base corner for the 16×16 chunk footprint
