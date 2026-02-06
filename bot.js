@@ -91,7 +91,7 @@ function itemCountByName (name) {
 
 function hasSolidFooting () {
   const below = bot.blockAt(bot.entity.position.offset(0, -1, 0).floored())
-  return Boolean(below && below.boundingBox === 'block' && below.name !== 'sand')
+  return Boolean(below && below.boundingBox === 'block' && !below.transparent && below.name !== 'sand')
 }
 
 async function equipItem (itemName, destination = 'hand') {
@@ -144,25 +144,25 @@ async function moveToSafePlatform () {
   }
 }
 
-function buildGridPositions (origin, layerIndex) {
+function buildGridTasks (origin, layerIndex) {
   const y = origin.y + (layerIndex * 3)
   const cells = []
 
   for (let dz = 0; dz < 16; dz++) {
-    for (let dx = 0; dx < 16; dx++) {
-      cells.push(new Vec3(origin.x + dx, y, origin.z + dz))
+    const leftToRight = dz % 2 === 0
+    const xValues = leftToRight ? [...Array(16).keys()] : [...Array(16).keys()].reverse()
+
+    for (const dx of xValues) {
+      const scaffoldOffsetX = leftToRight ? 1 : -1
+      cells.push({ sandPos: new Vec3(origin.x + dx, y, origin.z + dz), scaffoldOffsetX })
     }
   }
 
   return cells
 }
 
-function chooseStringAnchor (cactusPos) {
-  return cactusPos.offset(1, 1, 1)
-}
-
-function chooseScaffoldPos (sandPos) {
-  return sandPos.offset(0, -1, 0)
+function chooseScaffoldPos (sandPos, xOffset) {
+  return sandPos.offset(xOffset, 0, 0)
 }
 
 async function gotoAndStand (target) {
@@ -195,8 +195,33 @@ async function placeBlockByName (referencePos, faceVec, itemName) {
   await sleepTicks(cfg.buildDelayTicks + (lagMode ? 2 : 0))
 }
 
-async function placeCactusStack (sandPos) {
-  const scaffoldPos = chooseScaffoldPos(sandPos)
+
+
+async function ensureVerticalSpine (origin, layerIndex) {
+  const spineX = origin.x - 2
+  const spineZ = origin.z
+  const targetY = origin.y + (layerIndex * 3) - 1
+
+  for (let y = origin.y - 1; y <= targetY; y++) {
+    const pos = new Vec3(spineX, y, spineZ)
+    const existing = bot.blockAt(pos)
+    if (existing && existing.boundingBox === 'block') continue
+
+    const below = pos.offset(0, -1, 0)
+    const support = bot.blockAt(below)
+    if (!support || support.boundingBox !== 'block') {
+      throw new Error(`Vertical spine missing support at ${below.toString()}`)
+    }
+
+    await gotoAndStand(below)
+    await placeBlockByName(below, new Vec3(0, 1, 0), 'cobblestone')
+  }
+
+  await gotoAndStand(new Vec3(spineX, targetY, spineZ))
+}
+
+async function placeCactusStack (sandPos, scaffoldOffsetX) {
+  const scaffoldPos = chooseScaffoldPos(sandPos, scaffoldOffsetX)
 
   await gotoAndStand(scaffoldPos)
   const scaffoldBlock = bot.blockAt(scaffoldPos)
@@ -232,16 +257,10 @@ async function placeCactusStack (sandPos) {
     await placeBlockByName(sandPos, new Vec3(0, 1, 0), 'cactus')
   }
 
-  const stringAnchor = chooseStringAnchor(cactusPos)
-  const anchorBlock = bot.blockAt(stringAnchor)
-  if (!anchorBlock || anchorBlock.boundingBox !== 'block') {
-    throw new Error(`String anchor missing at ${stringAnchor}; ensure farm template provides a valid adjacent collision block`)
-  }
-
-  const stringPos = cactusPos.offset(1, 1, 0)
+  const stringPos = cactusPos.offset(1, 0, 0)
   const existingString = bot.blockAt(stringPos)
   if (!isBlockName(existingString, 'tripwire')) {
-    await placeBlockByName(stringAnchor, new Vec3(0, 0, -1), 'string')
+    await placeBlockByName(cactusPos, new Vec3(1, 0, 0), 'string')
   }
 
   if (cfg.removeScaffold) {
@@ -328,7 +347,8 @@ async function runBuild () {
 
   for (let layer = 0; layer < cfg.layers; layer++) {
     console.log(`[INFO] Starting layer ${layer + 1}/${cfg.layers}`)
-    const cells = buildGridPositions(origin, layer)
+    await ensureVerticalSpine(origin, layer)
+    const cells = buildGridTasks(origin, layer)
     requireInventoryForLayer(cells.length)
 
     for (let i = 0; i < cells.length; i++) {
@@ -337,8 +357,8 @@ async function runBuild () {
         requireInventoryForLayer(remaining)
       }
 
-      const sandPos = cells[i]
-      await placeCactusStack(sandPos)
+      const task = cells[i]
+      await placeCactusStack(task.sandPos, task.scaffoldOffsetX)
     }
   }
 }
