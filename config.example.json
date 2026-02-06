@@ -1,0 +1,22 @@
+{
+  "host": "localhost",
+  "port": 25565,
+  "username": "CactusBuilderBot",
+  "password": null,
+  "auth": "offline",
+  "version": false,
+  "layers": 16,
+  "buildDelayTicks": 3,
+  "removeScaffold": true,
+  "safePlatform": {
+    "x": 0,
+    "y": 64,
+    "z": 0
+  },
+  "origin": {
+    "x": 0,
+    "y": 64,
+    "z": 0
+  },
+  "facingYawDegrees": 0
+}
