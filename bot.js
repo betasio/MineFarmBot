@@ -193,7 +193,11 @@ async function gotoAndStand (target) {
   await bot.pathfinder.goto(goal)
 
   const standing = bot.entity.position.floored()
-  if (!standing.equals(target)) {
+  if (
+    standing.x !== target.x ||
+    standing.z !== target.z ||
+    Math.abs(standing.y - target.y) > 0
+  ) {
     throw new Error(`Pathfinder stopped at ${standing.toString()} instead of ${target.toString()}`)
   }
 
@@ -214,6 +218,7 @@ async function placeBlockByName (referencePos, faceVec, itemName) {
     throw new Error(`Cannot place ${itemName}; missing reference block at ${referencePos}`)
   }
 
+  await bot.lookAt(reference.position.offset(0.5, 0.5, 0.5), true)
   await bot.placeBlock(reference, faceVec)
   await sleepTicks(cfg.buildDelayTicks + (lagMode ? 2 : 0))
 }
