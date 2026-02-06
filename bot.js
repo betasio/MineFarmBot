@@ -91,7 +91,14 @@ function itemCountByName (name) {
 
 function hasSolidFooting () {
   const below = bot.blockAt(bot.entity.position.offset(0, -1, 0).floored())
-  return Boolean(below && below.boundingBox === 'block' && !below.transparent && below.name !== 'sand')
+  return Boolean(
+    below &&
+    below.boundingBox === 'block' &&
+    !below.transparent &&
+    !below.name.includes('fence') &&
+    !below.name.includes('wall') &&
+    below.name !== 'sand'
+  )
 }
 
 async function equipItem (itemName, destination = 'hand') {
@@ -109,11 +116,22 @@ function isBlockName (block, name) {
 function requireInventoryForLayer (remainingCells) {
   const sand = itemCountByName('sand')
   const cactus = itemCountByName('cactus')
-  const cobble = itemCountByName('cobblestone')
   const stringCount = itemCountByName('string')
 
-  if (sand < remainingCells || cactus < remainingCells || cobble < remainingCells || stringCount < remainingCells) {
-    throw new Error(`Insufficient inventory for remaining ${remainingCells} cells. sand=${sand}, cactus=${cactus}, cobblestone=${cobble}, string=${stringCount}`)
+  if (sand < remainingCells || cactus < remainingCells || stringCount < remainingCells) {
+    throw new Error(`Insufficient inventory for remaining ${remainingCells} cells. sand=${sand}, cactus=${cactus}, string=${stringCount}`)
+  }
+}
+
+function requireCobblestoneForLayer (layerIndex) {
+  const cellsPerLayer = 16 * 16
+  const spineNeeded = layerIndex === 0 ? 0 : 3
+  const conservativeScaffoldNeeded = cfg.removeScaffold ? cellsPerLayer : 0
+  const needed = spineNeeded + conservativeScaffoldNeeded
+  const cobble = itemCountByName('cobblestone')
+
+  if (cobble < needed) {
+    throw new Error(`Insufficient cobblestone for layer ${layerIndex + 1}. needed~=${needed}, have=${cobble}`)
   }
 }
 
@@ -239,6 +257,11 @@ async function placeCactusStack (sandPos, scaffoldOffsetX) {
       throw new Error(`Cannot scaffold at ${scaffoldPos}; no solid support below`)
     }
     await placeBlockByName(scaffoldPos.offset(0, -1, 0), new Vec3(0, 1, 0), 'cobblestone')
+
+    const placed = bot.blockAt(scaffoldPos)
+    if (!placed || placed.boundingBox !== 'block') {
+      throw new Error(`Scaffold placement failed at ${scaffoldPos}`)
+    }
   }
 
   await gotoAndStand(scaffoldPos)
@@ -266,7 +289,7 @@ async function placeCactusStack (sandPos, scaffoldOffsetX) {
 
   const stringPos = cactusPos.offset(scaffoldOffsetX, 0, 0)
   const existingString = bot.blockAt(stringPos)
-  if (!isBlockName(existingString, 'tripwire')) {
+  if (!existingString || existingString.name !== 'tripwire') {
     await placeBlockByName(cactusPos, new Vec3(scaffoldOffsetX, 0, 0), 'string')
   }
 
@@ -360,6 +383,7 @@ async function runBuild () {
 
     console.log(`[INFO] Starting layer ${layer + 1}/${cfg.layers}`)
     await ensureVerticalSpine(origin, layer)
+    requireCobblestoneForLayer(layer)
     const cells = buildGridTasks(origin, layer)
     requireInventoryForLayer(cells.length)
 
