@@ -12,7 +12,7 @@ Mineflayer-based Minecraft Java bot that builds chunk-aligned cactus farm layers
   2. Move onto scaffold.
   3. Place sand.
   4. Place cactus.
-  5. Place string diagonally above cactus using a collision anchor.
+  5. Place string against the cactus collision edge on the open side.
   6. Optionally remove scaffold.
 - Uses an external vertical cobblestone spine (`origin.x - 2, origin.z`) to transition upward by 3 blocks between layers.
 - Safety constraints:
@@ -63,7 +63,7 @@ The bot prints clear stop messages if it detects unsafe movement, missing invent
 - `host`, `port`, `username`, `password`, `auth`, `version`
 - `layers` (number of layers, recommended 15–20)
 - `buildDelayTicks` (base delay between placements)
-- `removeScaffold` (`true`/`false`)
+- `removeScaffold` (`true`/`false`, default `false` for safer high-layer runs)
 - `origin` (`x,y,z`) base corner for the 16×16 chunk footprint
 - `safePlatform` (`x,y,z`) post-build / emergency retreat location
 - `facingYawDegrees` final direction before logout
@@ -72,4 +72,5 @@ The bot prints clear stop messages if it detects unsafe movement, missing invent
 
 - String is placed directly against each cactus collision edge; no external string anchor lattice is required.
 - The origin should be aligned to the target chunk and supported for all placements.
+- Starter spine block required: place a solid block at `(origin.x - 2, origin.y - 1, origin.z)` before start.
 - The bot does not interact with storage, hoppers, or water systems.

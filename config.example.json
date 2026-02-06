@@ -7,7 +7,7 @@
   "version": false,
   "layers": 18,
   "buildDelayTicks": 3,
-  "removeScaffold": true,
+  "removeScaffold": false,
   "safePlatform": {
     "x": 0,
     "y": 64,

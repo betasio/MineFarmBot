@@ -16,7 +16,7 @@ const DEFAULT_CONFIG = {
   version: false,
   layers: 18,
   buildDelayTicks: 3,
-  removeScaffold: true,
+  removeScaffold: false,
   safePlatform: { x: 0, y: 64, z: 0 },
   origin: { x: 0, y: 64, z: 0 },
   facingYawDegrees: 0
@@ -200,24 +200,31 @@ async function placeBlockByName (referencePos, faceVec, itemName) {
 async function ensureVerticalSpine (origin, layerIndex) {
   const spineX = origin.x - 2
   const spineZ = origin.z
+  const baseY = origin.y - 1
   const targetY = origin.y + (layerIndex * 3) - 1
 
-  for (let y = origin.y - 1; y <= targetY; y++) {
-    const pos = new Vec3(spineX, y, spineZ)
-    const existing = bot.blockAt(pos)
-    if (existing && existing.boundingBox === 'block') continue
-
-    const below = pos.offset(0, -1, 0)
-    const support = bot.blockAt(below)
-    if (!support || support.boundingBox !== 'block') {
-      throw new Error(`Vertical spine missing support at ${below.toString()}`)
-    }
-
-    await gotoAndStand(below)
-    await placeBlockByName(below, new Vec3(0, 1, 0), 'cobblestone')
+  const basePos = new Vec3(spineX, baseY, spineZ)
+  const baseBlock = bot.blockAt(basePos)
+  if (!baseBlock || baseBlock.boundingBox !== 'block') {
+    throw new Error(`Vertical spine base missing at ${basePos.toString()}. Place a starter cobblestone block there before running.`)
   }
 
-  await gotoAndStand(new Vec3(spineX, targetY, spineZ))
+  let highestConfirmedY = baseY
+  for (let y = baseY + 1; y <= targetY; y++) {
+    const current = new Vec3(spineX, y, spineZ)
+    const existing = bot.blockAt(current)
+    if (existing && existing.boundingBox === 'block') {
+      highestConfirmedY = y
+      continue
+    }
+
+    const standPos = new Vec3(spineX, highestConfirmedY, spineZ)
+    await gotoAndStand(standPos)
+    await placeBlockByName(standPos, new Vec3(0, 1, 0), 'cobblestone')
+    highestConfirmedY = y
+  }
+
+  await gotoAndStand(new Vec3(spineX, highestConfirmedY, spineZ))
 }
 
 async function placeCactusStack (sandPos, scaffoldOffsetX) {
@@ -257,10 +264,10 @@ async function placeCactusStack (sandPos, scaffoldOffsetX) {
     await placeBlockByName(sandPos, new Vec3(0, 1, 0), 'cactus')
   }
 
-  const stringPos = cactusPos.offset(1, 0, 0)
+  const stringPos = cactusPos.offset(scaffoldOffsetX, 0, 0)
   const existingString = bot.blockAt(stringPos)
   if (!isBlockName(existingString, 'tripwire')) {
-    await placeBlockByName(cactusPos, new Vec3(1, 0, 0), 'string')
+    await placeBlockByName(cactusPos, new Vec3(scaffoldOffsetX, 0, 0), 'string')
   }
 
   if (cfg.removeScaffold) {
@@ -279,7 +286,7 @@ function setupMovement () {
   const defaultMove = new Movements(bot)
   defaultMove.allowSprinting = false
   defaultMove.allowParkour = false
-  defaultMove.canDig = true
+  defaultMove.canDig = false
   defaultMove.maxDropDown = 1
   defaultMove.allow1by1towers = false
   defaultMove.allowEntityDetection = true
@@ -346,6 +353,11 @@ async function runBuild () {
   const origin = new Vec3(cfg.origin.x, cfg.origin.y, cfg.origin.z)
 
   for (let layer = 0; layer < cfg.layers; layer++) {
+    const layerY = origin.y + (layer * 3)
+    if (layerY > 319) {
+      throw new Error(`Y limit exceeded at layer ${layer + 1} (targetY=${layerY})`)
+    }
+
     console.log(`[INFO] Starting layer ${layer + 1}/${cfg.layers}`)
     await ensureVerticalSpine(origin, layer)
     const cells = buildGridTasks(origin, layer)
@@ -366,6 +378,9 @@ async function runBuild () {
 bot.once('spawn', async () => {
   console.log('[INFO] Spawned. Preparing build routine...')
   console.log(`[INFO] Config: layers=${cfg.layers}, buildDelayTicks=${cfg.buildDelayTicks}, removeScaffold=${cfg.removeScaffold}`)
+  if (cfg.removeScaffold) {
+    console.log('[WARN] Scaffold removal is enabled. This may be less safe on laggy servers.')
+  }
 
   try {
     setupMovement()
