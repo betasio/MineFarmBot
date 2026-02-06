@@ -14,12 +14,28 @@ const DEFAULT_CONFIG = {
   password: null,
   auth: 'offline',
   version: false,
-  layers: 16,
+  layers: 18,
   buildDelayTicks: 3,
   removeScaffold: true,
   safePlatform: { x: 0, y: 64, z: 0 },
   origin: { x: 0, y: 64, z: 0 },
   facingYawDegrees: 0
+}
+
+function clampInteger (value, min, max, fallback) {
+  const num = Number(value)
+  if (!Number.isFinite(num)) return fallback
+  return Math.max(min, Math.min(max, Math.floor(num)))
+}
+
+function validateConfig (config) {
+  return {
+    ...config,
+    layers: clampInteger(config.layers, 1, 128, DEFAULT_CONFIG.layers),
+    buildDelayTicks: clampInteger(config.buildDelayTicks, 1, 40, DEFAULT_CONFIG.buildDelayTicks),
+    removeScaffold: Boolean(config.removeScaffold),
+    facingYawDegrees: Number.isFinite(Number(config.facingYawDegrees)) ? Number(config.facingYawDegrees) : DEFAULT_CONFIG.facingYawDegrees
+  }
 }
 
 function loadConfig () {
@@ -39,7 +55,7 @@ function loadConfig () {
   }
 }
 
-const cfg = loadConfig()
+const cfg = validateConfig(loadConfig())
 const bot = mineflayer.createBot({
   host: cfg.host,
   port: cfg.port,
@@ -55,6 +71,7 @@ let isStopping = false
 let lastPhysics = null
 let lagSamples = []
 let lagMode = false
+let lagStateLogged = false
 
 function ticksToMs (ticks) {
   return Math.max(0, Math.floor((ticks / TICKS_PER_SECOND) * 1000))
@@ -112,7 +129,9 @@ async function safeStop (reason) {
     console.error(`[WARN] Failed to move to safe platform during stop: ${err.message}`)
   }
 
-  bot.quit(`[MineFarmBot] ${reason}`)
+  if (bot.player) {
+    bot.quit(`[MineFarmBot] ${reason}`)
+  }
 }
 
 async function moveToSafePlatform () {
@@ -147,6 +166,11 @@ function chooseScaffoldPos (sandPos) {
 }
 
 async function gotoAndStand (target) {
+  const belowTarget = bot.blockAt(target)
+  if (isBlockName(belowTarget, 'sand')) {
+    throw new Error(`Refusing to stand on sand at ${target.toString()}`)
+  }
+
   const goal = new goals.GoalGetToBlock(target.x, target.y + 1, target.z)
   await bot.pathfinder.goto(goal)
 
@@ -240,6 +264,9 @@ function setupMovement () {
   defaultMove.maxDropDown = 1
   defaultMove.allow1by1towers = false
   defaultMove.allowEntityDetection = true
+  if (Object.prototype.hasOwnProperty.call(defaultMove, 'allowDiagonalPathing')) {
+    defaultMove.allowDiagonalPathing = false
+  }
   bot.pathfinder.setMovements(defaultMove)
 }
 
@@ -253,6 +280,13 @@ function startLagMonitor () {
 
       const avg = lagSamples.reduce((a, b) => a + b, 0) / lagSamples.length
       lagMode = avg > 70
+      if (lagMode && !lagStateLogged) {
+        console.log('[WARN] Server lag detected. Slowing placement rate.')
+        lagStateLogged = true
+      } else if (!lagMode && lagStateLogged) {
+        console.log('[INFO] Lag recovered. Returning to normal placement rate.')
+        lagStateLogged = false
+      }
     }
     lastPhysics = now
   })
@@ -271,6 +305,10 @@ function setupSafetyHooks () {
 
   bot.on('end', () => {
     console.log('[INFO] Disconnected from server.')
+    if (!isStopping) {
+      isStopping = true
+      console.log('[INFO] Build halted due to disconnect.')
+    }
   })
 
   bot.on('kicked', reason => {
@@ -307,6 +345,7 @@ async function runBuild () {
 
 bot.once('spawn', async () => {
   console.log('[INFO] Spawned. Preparing build routine...')
+  console.log(`[INFO] Config: layers=${cfg.layers}, buildDelayTicks=${cfg.buildDelayTicks}, removeScaffold=${cfg.removeScaffold}`)
 
   try {
     setupMovement()
