@@ -140,6 +140,8 @@ function requireCobblestoneForLayer (layerIndex) {
   if (cobble < needed) {
     throw new Error(`Insufficient cobblestone for layer ${layerIndex + 1}. needed~=${needed}, have=${cobble}`)
   }
+
+  throw new Error(`Area blocked too long at ${pos.toString()}`)
 }
 
 function assertNoEntityBlocking (targetPos, radius = 1.2) {
