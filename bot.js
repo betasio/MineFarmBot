@@ -78,6 +78,7 @@ let checkpointWritePending = false
 let pendingCheckpointPayload = null
 let clearCheckpointRequested = false
 let lastHumanLookAtMs = 0
+let busyPlacing = false
 
 function ticksToMs (ticks) {
   return Math.max(0, Math.floor((ticks / TICKS_PER_SECOND) * 1000))
@@ -92,7 +93,7 @@ function sleepMs (ms) {
 }
 
 async function randomHeadMovement () {
-  if (!bot || Math.random() > 0.03) return
+  if (!bot || busyPlacing || Math.random() > 0.03) return
   if ((Date.now() - lastHumanLookAtMs) < 2000) return
 
   lastHumanLookAtMs = Date.now()
@@ -382,12 +383,18 @@ async function placeBlockByName (referencePos, faceVec, itemName) {
     throw new Error(`Insufficient inventory item during placement: ${itemName}`)
   }
 
-  await equipItem(itemName)
-  const reference = requireLoaded(referencePos)
+  busyPlacing = true
+  try {
+    await equipItem(itemName)
+    const reference = requireLoaded(referencePos)
 
-  await bot.lookAt(reference.position.offset(0.5, 0.5, 0.5), true)
-  await bot.placeBlock(reference, faceVec)
-  await sleepTicks(cfg.buildDelayTicks + (lagMode ? 2 : 0))
+    await bot.lookAt(reference.position.offset(0.5, 0.5, 0.5), true)
+    await bot.placeBlock(reference, faceVec)
+    await sleepTicks(cfg.buildDelayTicks + (lagMode ? 2 : 0))
+  } finally {
+    busyPlacing = false
+  }
+
   await randomHeadMovement()
 }
 
@@ -671,6 +678,11 @@ function handleReconnect (reason) {
 }
 
 function registerBotEvents () {
+  bot.once('login', () => {
+    reconnectAttempts = 0
+    reconnectScheduled = false
+  })
+
   bot.once('spawn', async () => {
     reconnectAttempts = 0
     reconnectScheduled = false
@@ -718,6 +730,15 @@ function registerBotEvents () {
 }
 
 function createBot () {
+  if (bot) {
+    try {
+      bot.removeAllListeners()
+      bot.quit('[MineFarmBot] Reinitializing connection')
+    } catch (err) {
+      // best-effort cleanup
+    }
+  }
+
   lastPhysics = null
   lagSamples = []
   lagMode = false
@@ -726,6 +747,7 @@ function createBot () {
   checkpointWritePending = false
   pendingCheckpointPayload = null
   clearCheckpointRequested = false
+  busyPlacing = false
 
   bot = mineflayer.createBot({
     host: cfg.host,
