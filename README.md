@@ -6,14 +6,15 @@ Mineflayer-based Minecraft Java bot that builds chunk-aligned cactus farm layers
 
 - Builds exactly **16×16** cactus cells per layer.
 - Uses **3-block vertical spacing** between layers.
-- Configurable layer count (`layers`, default 16).
+- Configurable layer count (`layers`, default 18).
 - Build sequence per cell:
   1. Ensure cobblestone scaffold exists.
   2. Move onto scaffold.
   3. Place sand.
   4. Place cactus.
-  5. Place string diagonally above cactus using a collision anchor.
+  5. Place string against the cactus collision edge on the open side.
   6. Optionally remove scaffold.
+- Uses an external vertical cobblestone spine (`origin.x - 2, origin.z`) to transition upward by 3 blocks between layers.
 - Safety constraints:
   - Never intentionally stands on sand.
   - Requires solid support beneath bot.
@@ -42,20 +43,36 @@ cp config.example.json config.json
 npm start
 ```
 
+
+## Non-technical quick start
+
+1. Install Node.js (LTS) on Windows.
+2. Put this folder somewhere easy (for example `C:\MineFarmBot`).
+3. Open Command Prompt in the folder.
+4. Run `npm install` once.
+5. Run `copy config.example.json config.json` and edit `config.json` in Notepad.
+6. Set at least: server `host`, `port`, `username`, and farm `origin` / `safePlatform`.
+7. Start with `npm start`.
+
+The bot prints clear stop messages if it detects unsafe movement, missing inventory, or disconnection.
+
+Progress checkpoints are written every 16 placements to `build-checkpoint.json` so a restart can resume from the last saved row.
+
 ## Config
 
 `config.json` fields:
 
 - `host`, `port`, `username`, `password`, `auth`, `version`
-- `layers` (number of layers)
+- `layers` (number of layers, recommended 15–20)
 - `buildDelayTicks` (base delay between placements)
-- `removeScaffold` (`true`/`false`)
+- `removeScaffold` (`true`/`false`, default `false` for safer high-layer runs)
 - `origin` (`x,y,z`) base corner for the 16×16 chunk footprint
 - `safePlatform` (`x,y,z`) post-build / emergency retreat location
 - `facingYawDegrees` final direction before logout
 
 ## Important world assumptions
 
-- The target farm template must provide a valid solid block at each string anchor position used by the bot.
+- String is placed directly against each cactus collision edge; no external string anchor lattice is required.
 - The origin should be aligned to the target chunk and supported for all placements.
+- Starter spine block required: place a solid block at `(origin.x - 2, origin.y - 1, origin.z)` before start.
 - The bot does not interact with storage, hoppers, or water systems.
