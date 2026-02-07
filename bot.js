@@ -213,6 +213,8 @@ function clearCheckpoint () {
   if (!checkpointWritePending && fs.existsSync(CHECKPOINT_PATH)) {
     fs.unlinkSync(CHECKPOINT_PATH)
   }
+
+  throw new Error(`Area blocked too long at ${pos.toString()}`)
 }
 
 function requireLoaded (pos) {
