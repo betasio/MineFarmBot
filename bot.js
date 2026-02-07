@@ -628,6 +628,15 @@ bot.once('spawn', async () => {
     startLagMonitor()
     setupSafetyHooks()
 
+    console.log('[INFO] Waiting for lobby to finish loading...')
+    await bot.waitForTicks(100)
+
+    console.log('[INFO] Sending /survival...')
+    bot.chat('/survival')
+
+    await bot.waitForTicks(120)
+    console.log('[INFO] Should now be in survival.')
+
     if (!hasSolidFooting()) {
       throw new Error('Bot spawned without solid non-sand footing')
     }

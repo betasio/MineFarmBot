@@ -52,9 +52,11 @@ npm start
 4. Run `npm install` once.
 5. Run `copy config.example.json config.json` and edit `config.json` in Notepad.
 6. Set at least: server `host`, `port`, `username`, and farm `origin` / `safePlatform`.
-7. Start with `npm start`.
+7. Start with `npm start` (the bot will auto-wait in lobby, run `/survival`, then begin building).
 
 The bot prints clear stop messages if it detects unsafe movement, missing inventory, or disconnection.
+
+On spawn, the bot waits for login/lobby load, sends `/survival`, waits for teleport, then starts building automatically.
 
 Progress checkpoints are written every 16 placements to `build-checkpoint.json` so a restart can resume from the last saved row.
 
