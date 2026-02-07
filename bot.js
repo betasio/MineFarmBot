@@ -171,8 +171,6 @@ function loadCheckpoint () {
     console.warn(`[WARN] Failed to read checkpoint file: ${err.message}. Starting from beginning.`)
     return { layer: 0, cell: 0 }
   }
-
-  throw new Error(`Area blocked too long at ${pos.toString()}`)
 }
 
 function flushCheckpointWrite () {
@@ -223,6 +221,47 @@ function requireLoaded (pos) {
     throw new Error(`Chunk not loaded at ${pos.toString()}`)
   }
   return block
+}
+
+
+function hasSolidNonSandBlockAt (pos) {
+  const block = bot.blockAt(pos)
+  return Boolean(block && block.boundingBox === 'block' && block.name !== 'sand')
+}
+
+async function waitForBlockName (pos, expectedName, attempts = 6, delayTicks = 1) {
+  for (let i = 0; i < attempts; i++) {
+    const block = bot.blockAt(pos)
+    if (block && block.name === expectedName) return block
+    await sleepTicks(delayTicks)
+  }
+
+  return bot.blockAt(pos)
+}
+
+async function moveOffScaffoldIfNeeded (scaffoldPos, sandPos, scaffoldOffsetX) {
+  const standing = bot.entity.position.floored()
+  if (!standing.equals(scaffoldPos)) return
+
+  const candidates = [
+    chooseScaffoldPos(sandPos, -scaffoldOffsetX),
+    scaffoldPos.offset(0, 0, 1),
+    scaffoldPos.offset(0, 0, -1),
+    scaffoldPos.offset(scaffoldOffsetX, 0, 0),
+    scaffoldPos.offset(-scaffoldOffsetX, 0, 0)
+  ]
+
+  for (const candidate of candidates) {
+    if (candidate.equals(scaffoldPos)) continue
+    if (!hasSolidNonSandBlockAt(candidate)) continue
+
+    try {
+      await gotoAndStand(candidate)
+      return
+    } catch (err) {
+      // try next candidate
+    }
+  }
 }
 
 async function waitForClearArea (pos, timeoutMs = 5000) {
@@ -300,7 +339,7 @@ async function gotoAndStand (target) {
   if (
     standing.x !== target.x ||
     standing.z !== target.z ||
-    Math.abs(standing.y - target.y) > 0
+    Math.abs(standing.y - target.y) > 1
   ) {
     throw new Error(`Pathfinder stopped at ${standing.toString()} instead of ${target.toString()}`)
   }
@@ -406,7 +445,7 @@ async function placeCactusStack (sandPos, scaffoldOffsetX) {
     }
     await placeBlockByName(scaffoldPos.offset(0, -1, 0), new Vec3(0, 1, 0), 'cobblestone')
 
-    const placed = requireLoaded(scaffoldPos)
+    const placed = await waitForBlockName(scaffoldPos, 'cobblestone')
     if (!placed || placed.boundingBox !== 'block') {
       throw new Error(`Scaffold placement failed at ${scaffoldPos}`)
     }
@@ -426,7 +465,7 @@ async function placeCactusStack (sandPos, scaffoldOffsetX) {
     await placeBlockByName(sandPos.offset(0, -1, 0), new Vec3(0, 1, 0), 'sand')
   }
 
-  const sandBlock = requireLoaded(sandPos)
+  const sandBlock = await waitForBlockName(sandPos, 'sand')
   if (!isBlockName(sandBlock, 'sand')) {
     throw new Error(`Sand placement failed at ${sandPos}`)
   }
@@ -436,6 +475,11 @@ async function placeCactusStack (sandPos, scaffoldOffsetX) {
   const existingCactus = requireLoaded(cactusPos)
   if (!isBlockName(existingCactus, 'cactus')) {
     await placeBlockByName(sandPos, new Vec3(0, 1, 0), 'cactus')
+
+    const placedCactus = await waitForBlockName(cactusPos, 'cactus')
+    if (!placedCactus || placedCactus.name !== 'cactus') {
+      throw new Error(`Cactus placement failed at ${cactusPos.toString()}`)
+    }
   }
 
   const stringPos = cactusPos.offset(scaffoldOffsetX, 0, 0)
@@ -444,13 +488,15 @@ async function placeCactusStack (sandPos, scaffoldOffsetX) {
   if (!existingString || existingString.name !== 'tripwire') {
     await placeBlockByName(cactusPos, new Vec3(scaffoldOffsetX, 0, 0), 'string')
 
-    const placedString = requireLoaded(stringPos)
+    const placedString = await waitForBlockName(stringPos, 'tripwire')
     if (!placedString || placedString.name !== 'tripwire') {
       throw new Error(`String placement failed at ${stringPos.toString()}`)
     }
   }
 
   if (cfg.removeScaffold) {
+    await moveOffScaffoldIfNeeded(scaffoldPos, sandPos, scaffoldOffsetX)
+
     const botPos = bot.entity.position.floored()
     if (!botPos.equals(scaffoldPos)) {
       const scaf = bot.blockAt(scaffoldPos)
