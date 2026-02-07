@@ -117,21 +117,35 @@ function requireInventoryForLayer (remainingCells) {
   const sand = itemCountByName('sand')
   const cactus = itemCountByName('cactus')
   const stringCount = itemCountByName('string')
+  const buffer = Math.ceil(remainingCells * 0.05)
+  const needed = remainingCells + buffer
 
-  if (sand < remainingCells || cactus < remainingCells || stringCount < remainingCells) {
-    throw new Error(`Insufficient inventory for remaining ${remainingCells} cells. sand=${sand}, cactus=${cactus}, string=${stringCount}`)
+  if (sand < needed || cactus < needed || stringCount < needed) {
+    throw new Error(`Insufficient inventory for remaining ${remainingCells} cells (+${buffer} buffer). sand=${sand}, cactus=${cactus}, string=${stringCount}`)
   }
 }
 
 function requireCobblestoneForLayer (layerIndex) {
   const cellsPerLayer = 16 * 16
-  const spineNeeded = 3
+  const spineNeeded = (layerIndex + 1) * 4
   const conservativeScaffoldNeeded = cfg.removeScaffold ? cellsPerLayer : 0
   const needed = spineNeeded + conservativeScaffoldNeeded
   const cobble = itemCountByName('cobblestone')
 
   if (cobble < needed) {
     throw new Error(`Insufficient cobblestone for layer ${layerIndex + 1}. needed~=${needed}, have=${cobble}`)
+  }
+}
+
+function assertNoEntityBlocking (targetPos, radius = 1.2) {
+  const entities = Object.values(bot.entities)
+  for (const entity of entities) {
+    if (!entity || !entity.position) continue
+    if (bot.entity && entity.id === bot.entity.id) continue
+
+    if (entity.position.distanceTo(targetPos) < radius) {
+      throw new Error(`Entity blocking placement area at ${targetPos.toString()}`)
+    }
   }
 }
 
@@ -276,6 +290,8 @@ async function placeCactusStack (sandPos, scaffoldOffsetX) {
 
   await gotoAndStand(scaffoldPos)
 
+  assertNoEntityBlocking(sandPos)
+
   const sandBase = bot.blockAt(sandPos.offset(0, -1, 0))
   if (!sandBase || sandBase.boundingBox !== 'block') {
     throw new Error(`Cannot place sand at ${sandPos}; unsupported location`)
@@ -292,15 +308,22 @@ async function placeCactusStack (sandPos, scaffoldOffsetX) {
   }
 
   const cactusPos = sandPos.offset(0, 1, 0)
+  assertNoEntityBlocking(cactusPos)
   const existingCactus = bot.blockAt(cactusPos)
   if (!isBlockName(existingCactus, 'cactus')) {
     await placeBlockByName(sandPos, new Vec3(0, 1, 0), 'cactus')
   }
 
   const stringPos = cactusPos.offset(scaffoldOffsetX, 0, 0)
+  assertNoEntityBlocking(stringPos)
   const existingString = bot.blockAt(stringPos)
   if (!existingString || existingString.name !== 'tripwire') {
     await placeBlockByName(cactusPos, new Vec3(scaffoldOffsetX, 0, 0), 'string')
+
+    const placedString = bot.blockAt(stringPos)
+    if (!placedString || placedString.name !== 'tripwire') {
+      throw new Error(`String placement failed at ${stringPos.toString()}`)
+    }
   }
 
   if (cfg.removeScaffold) {
