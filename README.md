@@ -21,6 +21,7 @@ Mineflayer-based Minecraft Java bot that builds chunk-aligned cactus farm layers
   - Stops if fall > 1 block is detected.
   - Stops and logs out on inventory shortages.
   - Slows placement rate when lag is detected.
+- Adds tiny random head movement during work to appear less robotic.
 
 ## Setup
 
@@ -59,6 +60,8 @@ npm start
 The bot prints clear stop messages if it detects unsafe movement, missing inventory, or disconnection.
 
 On spawn, the bot waits for login/lobby load, sends `/survival`, waits for teleport movement, then starts building automatically.
+
+If disconnected/kicked/error occurs unexpectedly, the bot auto-reconnects with backoff and resumes from checkpoint.
 
 Progress checkpoints are written every 16 placements to `build-checkpoint.json` so a restart can resume from the last saved row.
 

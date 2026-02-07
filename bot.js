@@ -58,16 +58,11 @@ function loadConfig () {
 }
 
 const cfg = validateConfig(loadConfig())
-const bot = mineflayer.createBot({
-  host: cfg.host,
-  port: cfg.port,
-  username: cfg.username,
-  password: cfg.password,
-  auth: cfg.auth,
-  version: cfg.version || undefined
-})
 
-bot.loadPlugin(pathfinder)
+let bot
+let reconnectAttempts = 0
+let reconnectScheduled = false
+const MAX_RECONNECT_DELAY = 60_000
 
 let isStopping = false
 let lastPhysics = null
@@ -84,6 +79,20 @@ function ticksToMs (ticks) {
 
 function sleepTicks (ticks) {
   return new Promise(resolve => setTimeout(resolve, ticksToMs(ticks)))
+}
+
+async function randomHeadMovement () {
+  if (!bot || Math.random() > 0.03) return
+
+  const yaw = bot.entity.yaw + ((Math.random() - 0.5) * 1.2)
+  const pitch = (Math.random() - 0.5) * 0.4
+
+  try {
+    await bot.look(yaw, pitch, true)
+    await sleepTicks(5 + Math.floor(Math.random() * 10))
+  } catch (err) {
+    // ignore humanizer movement failures
+  }
 }
 
 function yawFromDegrees (degrees) {
@@ -127,6 +136,154 @@ function requireInventoryForLayer (remainingCells) {
 
   if (sand < needed || cactus < needed || stringCount < needed) {
     throw new Error(`Insufficient inventory for remaining ${remainingCells} cells (+${buffer} buffer). sand=${sand}, cactus=${cactus}, string=${stringCount}`)
+  }
+
+  throw new Error(`Area blocked too long at ${pos.toString()}`)
+}
+
+function requireCobblestoneForLayer (layerIndex) {
+  const cellsPerLayer = 16 * 16
+  const spineNeeded = (layerIndex + 1) * 4
+  const conservativeScaffoldNeeded = cfg.removeScaffold ? cellsPerLayer : 0
+  const needed = spineNeeded + conservativeScaffoldNeeded
+  const cobble = itemCountByName('cobblestone')
+
+  if (cobble < needed) {
+    throw new Error(`Insufficient cobblestone for layer ${layerIndex + 1}. needed~=${needed}, have=${cobble}`)
+  }
+}
+
+function assertNoEntityBlocking (targetPos, radius = 1.2) {
+  const entities = Object.values(bot.entities)
+  for (const entity of entities) {
+    if (!entity || !entity.position) continue
+    if (bot.entity && entity.id === bot.entity.id) continue
+
+    if (entity.position.distanceTo(targetPos) < radius) {
+      throw new Error(`Entity blocking placement area at ${targetPos.toString()}`)
+    }
+  }
+}
+
+
+function loadCheckpoint () {
+  if (!fs.existsSync(CHECKPOINT_PATH)) {
+    return { layer: 0, cell: 0 }
+  }
+
+  try {
+    const raw = fs.readFileSync(CHECKPOINT_PATH, 'utf8')
+    const parsed = JSON.parse(raw)
+    return {
+      layer: clampInteger(parsed.layer, 0, cfg.layers, 0),
+      cell: clampInteger(parsed.cell, 0, 255, 0)
+    }
+  } catch (err) {
+    console.warn(`[WARN] Failed to read checkpoint file: ${err.message}. Starting from beginning.`)
+    return { layer: 0, cell: 0 }
+  }
+}
+
+function flushCheckpointWrite () {
+  if (clearCheckpointRequested) return
+  if (checkpointWritePending || pendingCheckpointPayload == null) return
+
+  checkpointWritePending = true
+  const payload = pendingCheckpointPayload
+  pendingCheckpointPayload = null
+
+  fs.writeFile(CHECKPOINT_PATH, payload, err => {
+    checkpointWritePending = false
+    if (err) {
+      console.warn(`[WARN] Failed to save checkpoint: ${err.message}`)
+    }
+
+    if (clearCheckpointRequested) {
+      if (fs.existsSync(CHECKPOINT_PATH)) {
+        fs.unlinkSync(CHECKPOINT_PATH)
+      }
+      return
+    }
+
+    if (pendingCheckpointPayload != null) {
+      flushCheckpointWrite()
+    }
+  })
+}
+
+function saveCheckpoint (layer, cell) {
+  if (clearCheckpointRequested) return
+  pendingCheckpointPayload = JSON.stringify({ layer, cell }, null, 2)
+  flushCheckpointWrite()
+}
+
+function clearCheckpoint () {
+  clearCheckpointRequested = true
+  pendingCheckpointPayload = null
+
+  if (!checkpointWritePending && fs.existsSync(CHECKPOINT_PATH)) {
+    fs.unlinkSync(CHECKPOINT_PATH)
+  }
+}
+
+function requireLoaded (pos) {
+  const block = bot.blockAt(pos)
+  if (!block) {
+    throw new Error(`Chunk not loaded at ${pos.toString()}`)
+  }
+  return block
+}
+
+
+function hasSolidNonSandBlockAt (pos) {
+  const block = bot.blockAt(pos)
+  return Boolean(block && block.boundingBox === 'block' && block.name !== 'sand')
+}
+
+async function waitForBlockName (pos, expectedName, attempts = 6, delayTicks = 1) {
+  for (let i = 0; i < attempts; i++) {
+    const block = bot.blockAt(pos)
+    if (block && block.name === expectedName) return block
+    await sleepTicks(delayTicks)
+  }
+
+  return bot.blockAt(pos)
+}
+
+async function moveOffScaffoldIfNeeded (scaffoldPos, sandPos, scaffoldOffsetX) {
+  const standing = bot.entity.position.floored()
+  if (!standing.equals(scaffoldPos)) return
+
+  const candidates = [
+    chooseScaffoldPos(sandPos, -scaffoldOffsetX),
+    scaffoldPos.offset(0, 0, 1),
+    scaffoldPos.offset(0, 0, -1),
+    scaffoldPos.offset(scaffoldOffsetX, 0, 0),
+    scaffoldPos.offset(-scaffoldOffsetX, 0, 0)
+  ]
+
+  for (const candidate of candidates) {
+    if (candidate.equals(scaffoldPos)) continue
+    if (!hasSolidNonSandBlockAt(candidate)) continue
+
+    try {
+      await gotoAndStand(candidate)
+      return
+    } catch (err) {
+      // try next candidate
+    }
+  }
+}
+
+async function waitForClearArea (pos, timeoutMs = 5000) {
+  const start = Date.now()
+  while ((Date.now() - start) < timeoutMs) {
+    try {
+      assertNoEntityBlocking(pos)
+      return
+    } catch (err) {
+      await sleepTicks(10)
+    }
   }
 
   throw new Error(`Area blocked too long at ${pos.toString()}`)
@@ -368,6 +525,7 @@ async function placeBlockByName (referencePos, faceVec, itemName) {
   await bot.lookAt(reference.position.offset(0.5, 0.5, 0.5), true)
   await bot.placeBlock(reference, faceVec)
   await sleepTicks(cfg.buildDelayTicks + (lagMode ? 2 : 0))
+  await randomHeadMovement()
 }
 
 
@@ -556,25 +714,6 @@ function setupSafetyHooks () {
     }
     lastY = y
   })
-
-  bot.on('end', () => {
-    console.log('[INFO] Disconnected from server.')
-    if (!isStopping) {
-      isStopping = true
-      console.log('[INFO] Build halted due to disconnect.')
-    }
-  })
-
-  bot.on('kicked', reason => {
-    console.error(`[KICKED] ${reason}`)
-  })
-
-  bot.on('error', err => {
-    console.error(`[ERROR] ${err.message}`)
-    if (!isStopping) {
-      safeStop(`Unhandled bot error: ${err.message}`)
-    }
-  })
 }
 
 async function runBuild () {
@@ -643,29 +782,86 @@ async function enterSurvivalFromLobby () {
   console.log('[INFO] Survival transfer stage complete.')
 }
 
-bot.once('spawn', async () => {
-  console.log('[INFO] Spawned. Preparing build routine...')
-  console.log(`[INFO] Config: layers=${cfg.layers}, buildDelayTicks=${cfg.buildDelayTicks}, removeScaffold=${cfg.removeScaffold}`)
-  if (cfg.removeScaffold) {
-    console.log('[WARN] Scaffold removal is enabled. This may be less safe on laggy servers.')
-  }
 
-  try {
-    setupMovement()
-    startLagMonitor()
-    setupSafetyHooks()
+function handleReconnect (reason) {
+  if (isStopping || reconnectScheduled) return
 
-    await enterSurvivalFromLobby()
+  reconnectScheduled = true
+  reconnectAttempts += 1
+  const delay = Math.min(5000 * reconnectAttempts, MAX_RECONNECT_DELAY)
+  console.log(`[RECONNECT] Lost connection (${reason}). Attempt ${reconnectAttempts}. Reconnecting in ${Math.floor(delay / 1000)}s`)
 
-    if (!hasSolidFooting()) {
-      throw new Error('Bot spawned without solid non-sand footing')
+  setTimeout(() => {
+    reconnectScheduled = false
+    createBot()
+  }, delay)
+}
+
+function registerBotEvents () {
+  bot.once('spawn', async () => {
+    reconnectAttempts = 0
+    reconnectScheduled = false
+
+    console.log('[INFO] Spawned. Preparing build routine...')
+    console.log(`[INFO] Config: layers=${cfg.layers}, buildDelayTicks=${cfg.buildDelayTicks}, removeScaffold=${cfg.removeScaffold}`)
+    if (cfg.removeScaffold) {
+      console.log('[WARN] Scaffold removal is enabled. This may be less safe on laggy servers.')
     }
 
-    await runBuild()
-    await moveToSafePlatform()
-    await bot.look(yawFromDegrees(cfg.facingYawDegrees), 0, true)
-    bot.quit('[MineFarmBot] Build completed successfully')
-  } catch (err) {
-    await safeStop(err.message)
-  }
-})
+    try {
+      setupMovement()
+      startLagMonitor()
+      setupSafetyHooks()
+
+      await enterSurvivalFromLobby()
+
+      if (!hasSolidFooting()) {
+        throw new Error('Bot spawned without solid non-sand footing')
+      }
+
+      await runBuild()
+      await moveToSafePlatform()
+      await bot.look(yawFromDegrees(cfg.facingYawDegrees), 0, true)
+      bot.quit('[MineFarmBot] Build completed successfully')
+    } catch (err) {
+      await safeStop(err.message)
+    }
+  })
+
+  bot.on('end', () => {
+    console.log('[INFO] Disconnected from server.')
+    handleReconnect('end')
+  })
+
+  bot.on('kicked', reason => {
+    console.error(`[KICKED] ${reason}`)
+    handleReconnect('kicked')
+  })
+
+  bot.on('error', err => {
+    console.error(`[ERROR] ${err.message}`)
+    handleReconnect(`error: ${err.message}`)
+  })
+}
+
+function createBot () {
+  lastPhysics = null
+  lagSamples = []
+  lagMode = false
+  lagStateLogged = false
+  isStopping = false
+
+  bot = mineflayer.createBot({
+    host: cfg.host,
+    port: cfg.port,
+    username: cfg.username,
+    password: cfg.password,
+    auth: cfg.auth,
+    version: cfg.version || undefined
+  })
+
+  bot.loadPlugin(pathfinder)
+  registerBotEvents()
+}
+
+createBot()
