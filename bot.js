@@ -74,6 +74,9 @@ let lastPhysics = null
 let lagSamples = []
 let lagMode = false
 let lagStateLogged = false
+let checkpointWritePending = false
+let pendingCheckpointPayload = null
+let clearCheckpointRequested = false
 
 function ticksToMs (ticks) {
   return Math.max(0, Math.floor((ticks / TICKS_PER_SECOND) * 1000))
@@ -137,6 +140,8 @@ function requireCobblestoneForLayer (layerIndex) {
   if (cobble < needed) {
     throw new Error(`Insufficient cobblestone for layer ${layerIndex + 1}. needed~=${needed}, have=${cobble}`)
   }
+
+  throw new Error(`Area blocked too long at ${pos.toString()}`)
 }
 
 function assertNoEntityBlocking (targetPos, radius = 1.2) {
@@ -170,12 +175,44 @@ function loadCheckpoint () {
   }
 }
 
+function flushCheckpointWrite () {
+  if (clearCheckpointRequested) return
+  if (checkpointWritePending || pendingCheckpointPayload == null) return
+
+  checkpointWritePending = true
+  const payload = pendingCheckpointPayload
+  pendingCheckpointPayload = null
+
+  fs.writeFile(CHECKPOINT_PATH, payload, err => {
+    checkpointWritePending = false
+    if (err) {
+      console.warn(`[WARN] Failed to save checkpoint: ${err.message}`)
+    }
+
+    if (clearCheckpointRequested) {
+      if (fs.existsSync(CHECKPOINT_PATH)) {
+        fs.unlinkSync(CHECKPOINT_PATH)
+      }
+      return
+    }
+
+    if (pendingCheckpointPayload != null) {
+      flushCheckpointWrite()
+    }
+  })
+}
+
 function saveCheckpoint (layer, cell) {
-  fs.writeFileSync(CHECKPOINT_PATH, JSON.stringify({ layer, cell }, null, 2))
+  if (clearCheckpointRequested) return
+  pendingCheckpointPayload = JSON.stringify({ layer, cell }, null, 2)
+  flushCheckpointWrite()
 }
 
 function clearCheckpoint () {
-  if (fs.existsSync(CHECKPOINT_PATH)) {
+  clearCheckpointRequested = true
+  pendingCheckpointPayload = null
+
+  if (!checkpointWritePending && fs.existsSync(CHECKPOINT_PATH)) {
     fs.unlinkSync(CHECKPOINT_PATH)
   }
 }
@@ -319,7 +356,29 @@ async function ensureVerticalSpine (origin, layerIndex) {
   await gotoAndStand(new Vec3(spineX, highestConfirmedY, spineZ))
 }
 
+
+function isCellCompleted (sandPos, scaffoldOffsetX) {
+  const sandBlock = bot.blockAt(sandPos)
+  if (!isBlockName(sandBlock, 'sand')) return false
+
+  const cactusPos = sandPos.offset(0, 1, 0)
+  const cactusBlock = bot.blockAt(cactusPos)
+  if (!isBlockName(cactusBlock, 'cactus')) return false
+
+  const preferredStringPos = cactusPos.offset(scaffoldOffsetX, 0, 0)
+  const preferredString = bot.blockAt(preferredStringPos)
+  if (isBlockName(preferredString, 'tripwire')) return true
+
+  const oppositeStringPos = cactusPos.offset(-scaffoldOffsetX, 0, 0)
+  const oppositeString = bot.blockAt(oppositeStringPos)
+  return isBlockName(oppositeString, 'tripwire')
+}
+
 async function placeCactusStack (sandPos, scaffoldOffsetX) {
+  if (isCellCompleted(sandPos, scaffoldOffsetX)) {
+    return
+  }
+
   const scaffoldPos = chooseScaffoldPos(sandPos, scaffoldOffsetX)
 
   await gotoAndStand(scaffoldPos)
