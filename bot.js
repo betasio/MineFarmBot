@@ -171,6 +171,8 @@ function loadCheckpoint () {
     console.warn(`[WARN] Failed to read checkpoint file: ${err.message}. Starting from beginning.`)
     return { layer: 0, cell: 0 }
   }
+
+  throw new Error(`Area blocked too long at ${pos.toString()}`)
 }
 
 function flushCheckpointWrite () {
