@@ -74,24 +74,6 @@ function validateConfig (config) {
   }
 }
 
-const CHECKPOINT_PATH = path.join(process.cwd(), 'build-checkpoint.json')
-
-function clampInteger (value, min, max, fallback) {
-  const num = Number(value)
-  if (!Number.isFinite(num)) return fallback
-  return Math.max(min, Math.min(max, Math.floor(num)))
-}
-
-function validateConfig (config) {
-  return {
-    ...config,
-    layers: clampInteger(config.layers, 1, 128, DEFAULT_CONFIG.layers),
-    buildDelayTicks: clampInteger(config.buildDelayTicks, 1, 40, DEFAULT_CONFIG.buildDelayTicks),
-    removeScaffold: Boolean(config.removeScaffold),
-    facingYawDegrees: Number.isFinite(Number(config.facingYawDegrees)) ? Number(config.facingYawDegrees) : DEFAULT_CONFIG.facingYawDegrees
-  }
-}
-
 function loadConfig () {
   const configPath = path.join(process.cwd(), 'config.json')
   if (!fs.existsSync(configPath)) {
@@ -243,7 +225,28 @@ function logLowInventoryWarning () {
   console.log(`[WARN] Materials low. Place a chest/barrel nearby to refill. sand=${itemCountByName('sand')}, cactus=${itemCountByName('cactus')}, string=${itemCountByName('string')}, cobblestone=${itemCountByName('cobblestone')}`)
 }
 
+
+function pruneIgnoredContainers () {
+  if (ignoredContainerUntilMs.size < 200) return
+  const now = Date.now()
+  for (const [key, until] of ignoredContainerUntilMs.entries()) {
+    if (until <= now) ignoredContainerUntilMs.delete(key)
+  }
+}
+
+async function gotoContainerForInteraction (containerBlock) {
+  const pos = containerBlock.position
+  await bot.pathfinder.goto(new goals.GoalNear(pos.x, pos.y, pos.z, 1))
+
+  const dist = bot.entity.position.distanceTo(pos.offset(0.5, 0.5, 0.5))
+  if (dist > 4) {
+    throw new Error(`Could not get close enough to container at ${pos.toString()}`)
+  }
+}
+
 function findNearbyContainer (radius = cfg.refill.radius) {
+  pruneIgnoredContainers()
+
   const base = bot.entity.position.floored()
   const now = Date.now()
   const names = new Set(['chest', 'trapped_chest', 'barrel'])
@@ -302,18 +305,20 @@ async function tryOpportunisticRefill (force = false) {
 
   const containerKey = containerBlock.position.toString()
   try {
-    await gotoAndStand(containerBlock.position)
+    await gotoContainerForInteraction(containerBlock)
     const container = await bot.openContainer(containerBlock)
     try {
       const targets = refillTargetsByItem()
-      let totalTaken = 0
-      totalTaken += await withdrawItemIfNeeded(container, 'sand', targets.sand)
-      totalTaken += await withdrawItemIfNeeded(container, 'cactus', targets.cactus)
-      totalTaken += await withdrawItemIfNeeded(container, 'string', targets.string)
-      totalTaken += await withdrawItemIfNeeded(container, 'cobblestone', targets.cobblestone)
+      const taken = {
+        sand: await withdrawItemIfNeeded(container, 'sand', targets.sand),
+        cactus: await withdrawItemIfNeeded(container, 'cactus', targets.cactus),
+        string: await withdrawItemIfNeeded(container, 'string', targets.string),
+        cobblestone: await withdrawItemIfNeeded(container, 'cobblestone', targets.cobblestone)
+      }
 
+      const totalTaken = taken.sand + taken.cactus + taken.string + taken.cobblestone
       if (totalTaken > 0) {
-        console.log(`[INFO] Refill complete from nearby container (${containerBlock.name}).`) 
+        console.log(`[INFO] Refill complete from ${containerBlock.name}: +${taken.sand} sand, +${taken.cactus} cactus, +${taken.string} string, +${taken.cobblestone} cobblestone.`)
         return true
       }
 
@@ -379,112 +384,6 @@ function loadCheckpoint () {
     console.warn(`[WARN] Failed to read checkpoint file: ${err.message}. Starting from beginning.`)
     return { layer: 0, cell: 0 }
   }
-}
-
-function flushCheckpointWrite () {
-  if (clearCheckpointRequested) return
-  if (checkpointWritePending || pendingCheckpointPayload == null) return
-
-  checkpointWritePending = true
-  const payload = pendingCheckpointPayload
-  pendingCheckpointPayload = null
-
-  fs.writeFile(CHECKPOINT_PATH, payload, err => {
-    checkpointWritePending = false
-    if (err) {
-      console.warn(`[WARN] Failed to save checkpoint: ${err.message}`)
-    }
-
-    if (clearCheckpointRequested) {
-      if (fs.existsSync(CHECKPOINT_PATH)) {
-        fs.unlinkSync(CHECKPOINT_PATH)
-      }
-      return
-    }
-
-    if (pendingCheckpointPayload != null) {
-      flushCheckpointWrite()
-    }
-  })
-}
-
-function saveCheckpoint (layer, cell) {
-  if (clearCheckpointRequested) return
-  pendingCheckpointPayload = JSON.stringify({ layer, cell }, null, 2)
-  flushCheckpointWrite()
-}
-
-function clearCheckpoint () {
-  clearCheckpointRequested = true
-  pendingCheckpointPayload = null
-
-  if (!checkpointWritePending && fs.existsSync(CHECKPOINT_PATH)) {
-    fs.unlinkSync(CHECKPOINT_PATH)
-  }
-}
-
-function requireLoaded (pos) {
-  const block = bot.blockAt(pos)
-  if (!block) {
-    throw new Error(`Chunk not loaded at ${pos.toString()}`)
-  }
-  return block
-}
-
-
-function hasSolidNonSandBlockAt (pos) {
-  const block = bot.blockAt(pos)
-  return Boolean(block && block.boundingBox === 'block' && block.name !== 'sand')
-}
-
-async function waitForBlockName (pos, expectedName, attempts = 8, delayTicks = 1) {
-  let lastBlock = null
-  for (let i = 0; i < attempts; i++) {
-    lastBlock = bot.blockAt(pos)
-    if (lastBlock && lastBlock.name === expectedName) return lastBlock
-    await sleepTicks(delayTicks)
-  }
-
-  return lastBlock
-}
-
-async function moveOffScaffoldIfNeeded (scaffoldPos, sandPos, scaffoldOffsetX) {
-  const standing = bot.entity.position.floored()
-  if (!standing.equals(scaffoldPos)) return
-
-  const candidates = [
-    chooseScaffoldPos(sandPos, -scaffoldOffsetX),
-    scaffoldPos.offset(0, 0, 1),
-    scaffoldPos.offset(0, 0, -1),
-    scaffoldPos.offset(scaffoldOffsetX, 0, 0),
-    scaffoldPos.offset(-scaffoldOffsetX, 0, 0)
-  ]
-
-  for (const candidate of candidates) {
-    if (candidate.equals(scaffoldPos)) continue
-    if (!hasSolidNonSandBlockAt(candidate)) continue
-
-    try {
-      await gotoAndStand(candidate)
-      return
-    } catch (err) {
-      // try next candidate
-    }
-  }
-}
-
-async function waitForClearArea (pos, timeoutMs = 5000) {
-  const start = Date.now()
-  while ((Date.now() - start) < timeoutMs) {
-    try {
-      assertNoEntityBlocking(pos)
-      return
-    } catch (err) {
-      await sleepTicks(10)
-    }
-  }
-
-  throw new Error(`Area blocked too long at ${pos.toString()}`)
 }
 
 function flushCheckpointWrite () {
