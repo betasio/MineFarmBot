@@ -18,5 +18,23 @@
     "y": 64,
     "z": 0
   },
-  "facingYawDegrees": 0
+  "facingYawDegrees": 0,
+  "refill": {
+    "enabled": true,
+    "radius": 7,
+    "cooldownMs": 30000,
+    "ignoreEmptyMs": 120000,
+    "thresholds": {
+      "sand": 64,
+      "cactus": 64,
+      "string": 64,
+      "cobblestone": 128
+    },
+    "targetStacks": {
+      "sand": 6,
+      "cactus": 6,
+      "string": 6,
+      "cobblestone": 8
+    }
+  }
 }

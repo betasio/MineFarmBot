@@ -22,6 +22,7 @@ Mineflayer-based Minecraft Java bot that builds chunk-aligned cactus farm layers
   - Stops and logs out on inventory shortages.
   - Slows placement rate when lag is detected.
 - Adds tiny random head movement during work to appear less robotic.
+- Supports opportunistic refill from nearby chest/trapped chest/barrel when materials run low.
 
 ## Setup
 
@@ -63,6 +64,8 @@ On spawn, the bot waits for login/lobby load, retries `/survival` if needed, wai
 
 If disconnected/kicked/error occurs unexpectedly, the bot auto-reconnects with backoff and resumes from checkpoint.
 
+If materials run low, place a chest/trapped chest/barrel near the bot; it will opportunistically pull items and continue.
+
 Progress checkpoints are written every 16 placements to `build-checkpoint.json` so a restart can resume from the last saved row.
 
 ## Config
@@ -76,6 +79,13 @@ Progress checkpoints are written every 16 placements to `build-checkpoint.json` 
 - `origin` (`x,y,z`) base corner for the 16×16 chunk footprint
 - `safePlatform` (`x,y,z`) post-build / emergency retreat location
 - `facingYawDegrees` final direction before logout
+- `refill` settings:
+  - `enabled` (turn opportunistic refill on/off)
+  - `radius` (nearby container scan radius)
+  - `cooldownMs` (minimum delay between refill attempts)
+  - `ignoreEmptyMs` (ignore empty container cooldown)
+  - `thresholds` (low-material trigger values)
+  - `targetStacks` (how much to pull per item when refilling)
 
 ## Important world assumptions
 

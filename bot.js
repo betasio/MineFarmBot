@@ -19,7 +19,59 @@ const DEFAULT_CONFIG = {
   removeScaffold: false,
   safePlatform: { x: 0, y: 64, z: 0 },
   origin: { x: 0, y: 64, z: 0 },
-  facingYawDegrees: 0
+  facingYawDegrees: 0,
+  refill: {
+    enabled: true,
+    radius: 7,
+    cooldownMs: 30000,
+    ignoreEmptyMs: 120000,
+    thresholds: { sand: 64, cactus: 64, string: 64, cobblestone: 128 },
+    targetStacks: { sand: 6, cactus: 6, string: 6, cobblestone: 8 }
+  }
+}
+
+const CHECKPOINT_PATH = path.join(process.cwd(), 'build-checkpoint.json')
+
+function clampInteger (value, min, max, fallback) {
+  const num = Number(value)
+  if (!Number.isFinite(num)) return fallback
+  return Math.max(min, Math.min(max, Math.floor(num)))
+}
+
+function validateConfig (config) {
+  const refill = {
+    ...DEFAULT_CONFIG.refill,
+    ...(config.refill || {}),
+    thresholds: { ...DEFAULT_CONFIG.refill.thresholds, ...((config.refill && config.refill.thresholds) || {}) },
+    targetStacks: { ...DEFAULT_CONFIG.refill.targetStacks, ...((config.refill && config.refill.targetStacks) || {}) }
+  }
+
+  return {
+    ...config,
+    layers: clampInteger(config.layers, 1, 128, DEFAULT_CONFIG.layers),
+    buildDelayTicks: clampInteger(config.buildDelayTicks, 1, 40, DEFAULT_CONFIG.buildDelayTicks),
+    removeScaffold: Boolean(config.removeScaffold),
+    facingYawDegrees: Number.isFinite(Number(config.facingYawDegrees)) ? Number(config.facingYawDegrees) : DEFAULT_CONFIG.facingYawDegrees,
+    refill: {
+      ...refill,
+      enabled: Boolean(refill.enabled),
+      radius: clampInteger(refill.radius, 2, 12, DEFAULT_CONFIG.refill.radius),
+      cooldownMs: clampInteger(refill.cooldownMs, 5000, 180000, DEFAULT_CONFIG.refill.cooldownMs),
+      ignoreEmptyMs: clampInteger(refill.ignoreEmptyMs, 10000, 600000, DEFAULT_CONFIG.refill.ignoreEmptyMs),
+      thresholds: {
+        sand: clampInteger(refill.thresholds.sand, 1, 2304, DEFAULT_CONFIG.refill.thresholds.sand),
+        cactus: clampInteger(refill.thresholds.cactus, 1, 2304, DEFAULT_CONFIG.refill.thresholds.cactus),
+        string: clampInteger(refill.thresholds.string, 1, 2304, DEFAULT_CONFIG.refill.thresholds.string),
+        cobblestone: clampInteger(refill.thresholds.cobblestone, 1, 2304, DEFAULT_CONFIG.refill.thresholds.cobblestone)
+      },
+      targetStacks: {
+        sand: clampInteger(refill.targetStacks.sand, 1, 36, DEFAULT_CONFIG.refill.targetStacks.sand),
+        cactus: clampInteger(refill.targetStacks.cactus, 1, 36, DEFAULT_CONFIG.refill.targetStacks.cactus),
+        string: clampInteger(refill.targetStacks.string, 1, 36, DEFAULT_CONFIG.refill.targetStacks.string),
+        cobblestone: clampInteger(refill.targetStacks.cobblestone, 1, 36, DEFAULT_CONFIG.refill.targetStacks.cobblestone)
+      }
+    }
+  }
 }
 
 const CHECKPOINT_PATH = path.join(process.cwd(), 'build-checkpoint.json')
@@ -79,6 +131,9 @@ let pendingCheckpointPayload = null
 let clearCheckpointRequested = false
 let lastHumanLookAtMs = 0
 let busyPlacing = false
+let lastRefillAttemptAtMs = 0
+let lastLowInventoryWarnAtMs = 0
+const ignoredContainerUntilMs = new Map()
 
 function ticksToMs (ticks) {
   return Math.max(0, Math.floor((ticks / TICKS_PER_SECOND) * 1000))
@@ -152,6 +207,137 @@ function requireInventoryForLayer (remainingCells) {
   }
 }
 
+
+function hasRequiredInventoryForRemaining (remainingCells) {
+  const sand = itemCountByName('sand')
+  const cactus = itemCountByName('cactus')
+  const stringCount = itemCountByName('string')
+  const buffer = Math.ceil(remainingCells * 0.05)
+  const needed = remainingCells + buffer
+  return sand >= needed && cactus >= needed && stringCount >= needed
+}
+
+function needsRefillByThreshold () {
+  if (!cfg.refill.enabled) return false
+  const t = cfg.refill.thresholds
+  return itemCountByName('sand') < t.sand ||
+    itemCountByName('cactus') < t.cactus ||
+    itemCountByName('string') < t.string ||
+    itemCountByName('cobblestone') < t.cobblestone
+}
+
+function refillTargetsByItem () {
+  const stacks = cfg.refill.targetStacks
+  return {
+    sand: stacks.sand * 64,
+    cactus: stacks.cactus * 64,
+    string: stacks.string * 64,
+    cobblestone: stacks.cobblestone * 64
+  }
+}
+
+function logLowInventoryWarning () {
+  const now = Date.now()
+  if ((now - lastLowInventoryWarnAtMs) < 45000) return
+  lastLowInventoryWarnAtMs = now
+  console.log(`[WARN] Materials low. Place a chest/barrel nearby to refill. sand=${itemCountByName('sand')}, cactus=${itemCountByName('cactus')}, string=${itemCountByName('string')}, cobblestone=${itemCountByName('cobblestone')}`)
+}
+
+function findNearbyContainer (radius = cfg.refill.radius) {
+  const base = bot.entity.position.floored()
+  const now = Date.now()
+  const names = new Set(['chest', 'trapped_chest', 'barrel'])
+
+  for (let dx = -radius; dx <= radius; dx++) {
+    for (let dy = -2; dy <= 2; dy++) {
+      for (let dz = -radius; dz <= radius; dz++) {
+        const pos = base.offset(dx, dy, dz)
+        const key = pos.toString()
+        const ignoredUntil = ignoredContainerUntilMs.get(key) || 0
+        if (ignoredUntil > now) continue
+
+        const block = bot.blockAt(pos)
+        if (!block || !names.has(block.name)) continue
+        return block
+      }
+    }
+  }
+
+  return null
+}
+
+async function withdrawItemIfNeeded (container, itemName, targetCount) {
+  const current = itemCountByName(itemName)
+  if (current >= targetCount) return 0
+
+  const itemInfo = bot.registry.itemsByName[itemName]
+  if (!itemInfo) return 0
+
+  const available = container.containerItems()
+    .filter(i => i.name === itemName)
+    .reduce((sum, i) => sum + i.count, 0)
+  if (available <= 0) return 0
+
+  const want = Math.min(targetCount - current, available)
+  if (want <= 0) return 0
+
+  await container.withdraw(itemInfo.id, null, want)
+  return want
+}
+
+async function tryOpportunisticRefill (force = false) {
+  if (!cfg.refill.enabled) return false
+  if (!bot || busyPlacing) return false
+  if (!force && !needsRefillByThreshold()) return false
+
+  if (typeof bot.pathfinder.isMoving === 'function' && bot.pathfinder.isMoving()) return false
+
+  const now = Date.now()
+  if (!force && (now - lastRefillAttemptAtMs) < cfg.refill.cooldownMs) return false
+  lastRefillAttemptAtMs = now
+
+  logLowInventoryWarning()
+  const containerBlock = findNearbyContainer(cfg.refill.radius)
+  if (!containerBlock) return false
+
+  const containerKey = containerBlock.position.toString()
+  try {
+    await gotoAndStand(containerBlock.position)
+    const container = await bot.openContainer(containerBlock)
+    try {
+      const targets = refillTargetsByItem()
+      let totalTaken = 0
+      totalTaken += await withdrawItemIfNeeded(container, 'sand', targets.sand)
+      totalTaken += await withdrawItemIfNeeded(container, 'cactus', targets.cactus)
+      totalTaken += await withdrawItemIfNeeded(container, 'string', targets.string)
+      totalTaken += await withdrawItemIfNeeded(container, 'cobblestone', targets.cobblestone)
+
+      if (totalTaken > 0) {
+        console.log(`[INFO] Refill complete from nearby container (${containerBlock.name}).`) 
+        return true
+      }
+
+      ignoredContainerUntilMs.set(containerKey, Date.now() + cfg.refill.ignoreEmptyMs)
+      return false
+    } finally {
+      container.close()
+    }
+  } catch (err) {
+    ignoredContainerUntilMs.set(containerKey, Date.now() + 15000)
+    console.log(`[WARN] Refill attempt failed: ${err.message}`)
+    return false
+  }
+}
+
+async function ensureInventoryForRemaining (remainingCells) {
+  if (hasRequiredInventoryForRemaining(remainingCells)) return
+
+  const refilled = await tryOpportunisticRefill(true)
+  if (refilled && hasRequiredInventoryForRemaining(remainingCells)) return
+
+  requireInventoryForLayer(remainingCells)
+}
+
 function requireCobblestoneForLayer (layerIndex) {
   const cellsPerLayer = 16 * 16
   const spineNeeded = (layerIndex + 1) * 4
@@ -193,6 +379,112 @@ function loadCheckpoint () {
     console.warn(`[WARN] Failed to read checkpoint file: ${err.message}. Starting from beginning.`)
     return { layer: 0, cell: 0 }
   }
+}
+
+function flushCheckpointWrite () {
+  if (clearCheckpointRequested) return
+  if (checkpointWritePending || pendingCheckpointPayload == null) return
+
+  checkpointWritePending = true
+  const payload = pendingCheckpointPayload
+  pendingCheckpointPayload = null
+
+  fs.writeFile(CHECKPOINT_PATH, payload, err => {
+    checkpointWritePending = false
+    if (err) {
+      console.warn(`[WARN] Failed to save checkpoint: ${err.message}`)
+    }
+
+    if (clearCheckpointRequested) {
+      if (fs.existsSync(CHECKPOINT_PATH)) {
+        fs.unlinkSync(CHECKPOINT_PATH)
+      }
+      return
+    }
+
+    if (pendingCheckpointPayload != null) {
+      flushCheckpointWrite()
+    }
+  })
+}
+
+function saveCheckpoint (layer, cell) {
+  if (clearCheckpointRequested) return
+  pendingCheckpointPayload = JSON.stringify({ layer, cell }, null, 2)
+  flushCheckpointWrite()
+}
+
+function clearCheckpoint () {
+  clearCheckpointRequested = true
+  pendingCheckpointPayload = null
+
+  if (!checkpointWritePending && fs.existsSync(CHECKPOINT_PATH)) {
+    fs.unlinkSync(CHECKPOINT_PATH)
+  }
+}
+
+function requireLoaded (pos) {
+  const block = bot.blockAt(pos)
+  if (!block) {
+    throw new Error(`Chunk not loaded at ${pos.toString()}`)
+  }
+  return block
+}
+
+
+function hasSolidNonSandBlockAt (pos) {
+  const block = bot.blockAt(pos)
+  return Boolean(block && block.boundingBox === 'block' && block.name !== 'sand')
+}
+
+async function waitForBlockName (pos, expectedName, attempts = 8, delayTicks = 1) {
+  let lastBlock = null
+  for (let i = 0; i < attempts; i++) {
+    lastBlock = bot.blockAt(pos)
+    if (lastBlock && lastBlock.name === expectedName) return lastBlock
+    await sleepTicks(delayTicks)
+  }
+
+  return lastBlock
+}
+
+async function moveOffScaffoldIfNeeded (scaffoldPos, sandPos, scaffoldOffsetX) {
+  const standing = bot.entity.position.floored()
+  if (!standing.equals(scaffoldPos)) return
+
+  const candidates = [
+    chooseScaffoldPos(sandPos, -scaffoldOffsetX),
+    scaffoldPos.offset(0, 0, 1),
+    scaffoldPos.offset(0, 0, -1),
+    scaffoldPos.offset(scaffoldOffsetX, 0, 0),
+    scaffoldPos.offset(-scaffoldOffsetX, 0, 0)
+  ]
+
+  for (const candidate of candidates) {
+    if (candidate.equals(scaffoldPos)) continue
+    if (!hasSolidNonSandBlockAt(candidate)) continue
+
+    try {
+      await gotoAndStand(candidate)
+      return
+    } catch (err) {
+      // try next candidate
+    }
+  }
+}
+
+async function waitForClearArea (pos, timeoutMs = 5000) {
+  const start = Date.now()
+  while ((Date.now() - start) < timeoutMs) {
+    try {
+      assertNoEntityBlocking(pos)
+      return
+    } catch (err) {
+      await sleepTicks(10)
+    }
+  }
+
+  throw new Error(`Area blocked too long at ${pos.toString()}`)
 }
 
 function flushCheckpointWrite () {
@@ -602,16 +894,17 @@ async function runBuild () {
     const cells = buildGridTasks(origin, layer)
     const startCell = layer === checkpoint.layer ? checkpoint.cell : 0
     const remainingFromStart = cells.length - startCell
-    requireInventoryForLayer(remainingFromStart)
+    await ensureInventoryForRemaining(remainingFromStart)
 
     for (let i = startCell; i < cells.length; i++) {
       const remaining = cells.length - i
       if (remaining % 16 === 0) {
-        requireInventoryForLayer(remaining)
+        await ensureInventoryForRemaining(remaining)
       }
 
       const task = cells[i]
       await placeCactusStack(task.sandPos, task.scaffoldOffsetX)
+      await tryOpportunisticRefill(false)
 
       if ((i + 1) % 16 === 0) {
         const nextCell = i + 1
@@ -748,6 +1041,9 @@ function createBot () {
   pendingCheckpointPayload = null
   clearCheckpointRequested = false
   busyPlacing = false
+  lastRefillAttemptAtMs = 0
+  lastLowInventoryWarnAtMs = 0
+  ignoredContainerUntilMs.clear()
 
   bot = mineflayer.createBot({
     host: cfg.host,
