@@ -5,9 +5,9 @@
   "password": null,
   "auth": "offline",
   "version": false,
-  "layers": 16,
+  "layers": 18,
   "buildDelayTicks": 3,
-  "removeScaffold": true,
+  "removeScaffold": false,
   "safePlatform": {
     "x": 0,
     "y": 64,
