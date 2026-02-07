@@ -65,7 +65,7 @@ npm run check:structure
 
 The bot prints clear stop messages if it detects unsafe movement, missing inventory, or disconnection.
 
-On spawn, the bot waits for login/lobby load, sends `/survival`, waits for teleport movement, then starts building automatically.
+On spawn, the bot waits for login/lobby load, retries `/survival` if needed, waits for teleport movement, then starts building automatically.
 
 If disconnected/kicked/error occurs unexpectedly, the bot auto-reconnects with backoff and resumes from checkpoint.
 

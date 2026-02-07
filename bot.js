@@ -47,13 +47,18 @@ function loadConfig () {
     return DEFAULT_CONFIG
   }
 
-  const raw = fs.readFileSync(configPath, 'utf8')
-  const parsed = JSON.parse(raw)
-  return {
-    ...DEFAULT_CONFIG,
-    ...parsed,
-    origin: { ...DEFAULT_CONFIG.origin, ...(parsed.origin || {}) },
-    safePlatform: { ...DEFAULT_CONFIG.safePlatform, ...(parsed.safePlatform || {}) }
+  try {
+    const raw = fs.readFileSync(configPath, 'utf8')
+    const parsed = JSON.parse(raw)
+    return {
+      ...DEFAULT_CONFIG,
+      ...parsed,
+      origin: { ...DEFAULT_CONFIG.origin, ...(parsed.origin || {}) },
+      safePlatform: { ...DEFAULT_CONFIG.safePlatform, ...(parsed.safePlatform || {}) }
+    }
+  } catch (err) {
+    console.warn(`[WARN] Failed to parse config.json: ${err.message}. Falling back to defaults.`)
+    return DEFAULT_CONFIG
   }
 }
 
@@ -80,6 +85,10 @@ function ticksToMs (ticks) {
 
 function sleepTicks (ticks) {
   return new Promise(resolve => setTimeout(resolve, ticksToMs(ticks)))
+}
+
+function sleepMs (ms) {
+  return new Promise(resolve => setTimeout(resolve, Math.max(0, Math.floor(ms))))
 }
 
 async function randomHeadMovement () {
@@ -140,123 +149,6 @@ function requireInventoryForLayer (remainingCells) {
   if (sand < needed || cactus < needed || stringCount < needed) {
     throw new Error(`Insufficient inventory for remaining ${remainingCells} cells (+${buffer} buffer). sand=${sand}, cactus=${cactus}, string=${stringCount}`)
   }
-
-  try {
-    const raw = fs.readFileSync(CHECKPOINT_PATH, 'utf8')
-    const parsed = JSON.parse(raw)
-    return {
-      layer: clampInteger(parsed.layer, 0, cfg.layers, 0),
-      cell: clampInteger(parsed.cell, 0, 255, 0)
-    }
-  } catch (err) {
-    console.warn(`[WARN] Failed to read checkpoint file: ${err.message}. Starting from beginning.`)
-    return { layer: 0, cell: 0 }
-  }
-}
-
-function flushCheckpointWrite () {
-  if (clearCheckpointRequested) return
-  if (checkpointWritePending || pendingCheckpointPayload == null) return
-
-  checkpointWritePending = true
-  const payload = pendingCheckpointPayload
-  pendingCheckpointPayload = null
-
-  fs.writeFile(CHECKPOINT_PATH, payload, err => {
-    checkpointWritePending = false
-    if (err) {
-      console.warn(`[WARN] Failed to save checkpoint: ${err.message}`)
-    }
-
-    if (clearCheckpointRequested) {
-      if (fs.existsSync(CHECKPOINT_PATH)) {
-        fs.unlinkSync(CHECKPOINT_PATH)
-      }
-      return
-    }
-
-    if (pendingCheckpointPayload != null) {
-      flushCheckpointWrite()
-    }
-  })
-}
-
-function saveCheckpoint (layer, cell) {
-  if (clearCheckpointRequested) return
-  pendingCheckpointPayload = JSON.stringify({ layer, cell }, null, 2)
-  flushCheckpointWrite()
-}
-
-function clearCheckpoint () {
-  clearCheckpointRequested = true
-  pendingCheckpointPayload = null
-
-  if (!checkpointWritePending && fs.existsSync(CHECKPOINT_PATH)) {
-    fs.unlinkSync(CHECKPOINT_PATH)
-  }
-}
-
-function requireLoaded (pos) {
-  const block = bot.blockAt(pos)
-  if (!block) {
-    throw new Error(`Chunk not loaded at ${pos.toString()}`)
-  }
-  return block
-}
-
-
-function hasSolidNonSandBlockAt (pos) {
-  const block = bot.blockAt(pos)
-  return Boolean(block && block.boundingBox === 'block' && block.name !== 'sand')
-}
-
-async function waitForBlockName (pos, expectedName, attempts = 6, delayTicks = 1) {
-  for (let i = 0; i < attempts; i++) {
-    const block = bot.blockAt(pos)
-    if (block && block.name === expectedName) return block
-    await sleepTicks(delayTicks)
-  }
-
-  return bot.blockAt(pos)
-}
-
-async function moveOffScaffoldIfNeeded (scaffoldPos, sandPos, scaffoldOffsetX) {
-  const standing = bot.entity.position.floored()
-  if (!standing.equals(scaffoldPos)) return
-
-  const candidates = [
-    chooseScaffoldPos(sandPos, -scaffoldOffsetX),
-    scaffoldPos.offset(0, 0, 1),
-    scaffoldPos.offset(0, 0, -1),
-    scaffoldPos.offset(scaffoldOffsetX, 0, 0),
-    scaffoldPos.offset(-scaffoldOffsetX, 0, 0)
-  ]
-
-  for (const candidate of candidates) {
-    if (candidate.equals(scaffoldPos)) continue
-    if (!hasSolidNonSandBlockAt(candidate)) continue
-
-    try {
-      await gotoAndStand(candidate)
-      return
-    } catch (err) {
-      // try next candidate
-    }
-  }
-}
-
-async function waitForClearArea (pos, timeoutMs = 5000) {
-  const start = Date.now()
-  while ((Date.now() - start) < timeoutMs) {
-    try {
-      assertNoEntityBlocking(pos)
-      return
-    } catch (err) {
-      await sleepTicks(10)
-    }
-  }
-
-  throw new Error(`Area blocked too long at ${pos.toString()}`)
 }
 
 function requireCobblestoneForLayer (layerIndex) {
@@ -358,310 +250,15 @@ function hasSolidNonSandBlockAt (pos) {
   return Boolean(block && block.boundingBox === 'block' && block.name !== 'sand')
 }
 
-async function waitForBlockName (pos, expectedName, attempts = 6, delayTicks = 1) {
+async function waitForBlockName (pos, expectedName, attempts = 8, delayTicks = 1) {
+  let lastBlock = null
   for (let i = 0; i < attempts; i++) {
-    const block = bot.blockAt(pos)
-    if (block && block.name === expectedName) return block
+    lastBlock = bot.blockAt(pos)
+    if (lastBlock && lastBlock.name === expectedName) return lastBlock
     await sleepTicks(delayTicks)
   }
 
-  return bot.blockAt(pos)
-}
-
-async function moveOffScaffoldIfNeeded (scaffoldPos, sandPos, scaffoldOffsetX) {
-  const standing = bot.entity.position.floored()
-  if (!standing.equals(scaffoldPos)) return
-
-  const candidates = [
-    chooseScaffoldPos(sandPos, -scaffoldOffsetX),
-    scaffoldPos.offset(0, 0, 1),
-    scaffoldPos.offset(0, 0, -1),
-    scaffoldPos.offset(scaffoldOffsetX, 0, 0),
-    scaffoldPos.offset(-scaffoldOffsetX, 0, 0)
-  ]
-
-  for (const candidate of candidates) {
-    if (candidate.equals(scaffoldPos)) continue
-    if (!hasSolidNonSandBlockAt(candidate)) continue
-
-    try {
-      await gotoAndStand(candidate)
-      return
-    } catch (err) {
-      // try next candidate
-    }
-  }
-}
-
-async function waitForClearArea (pos, timeoutMs = 5000) {
-  const start = Date.now()
-  while ((Date.now() - start) < timeoutMs) {
-    try {
-      assertNoEntityBlocking(pos)
-      return
-    } catch (err) {
-      await sleepTicks(10)
-    }
-  }
-
-  throw new Error(`Area blocked too long at ${pos.toString()}`)
-}
-
-function requireCobblestoneForLayer (layerIndex) {
-  const cellsPerLayer = 16 * 16
-  const spineNeeded = (layerIndex + 1) * 4
-  const conservativeScaffoldNeeded = cfg.removeScaffold ? cellsPerLayer : 0
-  const needed = spineNeeded + conservativeScaffoldNeeded
-  const cobble = itemCountByName('cobblestone')
-
-  if (cobble < needed) {
-    throw new Error(`Insufficient cobblestone for layer ${layerIndex + 1}. needed~=${needed}, have=${cobble}`)
-  }
-}
-
-function assertNoEntityBlocking (targetPos, radius = 1.2) {
-  const entities = Object.values(bot.entities)
-  for (const entity of entities) {
-    if (!entity || !entity.position) continue
-    if (bot.entity && entity.id === bot.entity.id) continue
-
-    if (entity.position.distanceTo(targetPos) < radius) {
-      throw new Error(`Entity blocking placement area at ${targetPos.toString()}`)
-    }
-  }
-}
-
-
-function loadCheckpoint () {
-  if (!fs.existsSync(CHECKPOINT_PATH)) {
-    return { layer: 0, cell: 0 }
-  }
-
-  try {
-    const raw = fs.readFileSync(CHECKPOINT_PATH, 'utf8')
-    const parsed = JSON.parse(raw)
-    return {
-      layer: clampInteger(parsed.layer, 0, cfg.layers, 0),
-      cell: clampInteger(parsed.cell, 0, 255, 0)
-    }
-  } catch (err) {
-    console.warn(`[WARN] Failed to read checkpoint file: ${err.message}. Starting from beginning.`)
-    return { layer: 0, cell: 0 }
-  }
-}
-
-function flushCheckpointWrite () {
-  if (clearCheckpointRequested) return
-  if (checkpointWritePending || pendingCheckpointPayload == null) return
-
-  checkpointWritePending = true
-  const payload = pendingCheckpointPayload
-  pendingCheckpointPayload = null
-
-  fs.writeFile(CHECKPOINT_PATH, payload, err => {
-    checkpointWritePending = false
-    if (err) {
-      console.warn(`[WARN] Failed to save checkpoint: ${err.message}`)
-    }
-
-    if (clearCheckpointRequested) {
-      if (fs.existsSync(CHECKPOINT_PATH)) {
-        fs.unlinkSync(CHECKPOINT_PATH)
-      }
-      return
-    }
-
-    if (pendingCheckpointPayload != null) {
-      flushCheckpointWrite()
-    }
-  })
-}
-
-function saveCheckpoint (layer, cell) {
-  if (clearCheckpointRequested) return
-  pendingCheckpointPayload = JSON.stringify({ layer, cell }, null, 2)
-  flushCheckpointWrite()
-}
-
-function clearCheckpoint () {
-  clearCheckpointRequested = true
-  pendingCheckpointPayload = null
-
-  if (!checkpointWritePending && fs.existsSync(CHECKPOINT_PATH)) {
-    fs.unlinkSync(CHECKPOINT_PATH)
-  }
-}
-
-function requireLoaded (pos) {
-  const block = bot.blockAt(pos)
-  if (!block) {
-    throw new Error(`Chunk not loaded at ${pos.toString()}`)
-  }
-  return block
-}
-
-
-function hasSolidNonSandBlockAt (pos) {
-  const block = bot.blockAt(pos)
-  return Boolean(block && block.boundingBox === 'block' && block.name !== 'sand')
-}
-
-async function waitForBlockName (pos, expectedName, attempts = 6, delayTicks = 1) {
-  for (let i = 0; i < attempts; i++) {
-    const block = bot.blockAt(pos)
-    if (block && block.name === expectedName) return block
-    await sleepTicks(delayTicks)
-  }
-
-  return bot.blockAt(pos)
-}
-
-async function moveOffScaffoldIfNeeded (scaffoldPos, sandPos, scaffoldOffsetX) {
-  const standing = bot.entity.position.floored()
-  if (!standing.equals(scaffoldPos)) return
-
-  const candidates = [
-    chooseScaffoldPos(sandPos, -scaffoldOffsetX),
-    scaffoldPos.offset(0, 0, 1),
-    scaffoldPos.offset(0, 0, -1),
-    scaffoldPos.offset(scaffoldOffsetX, 0, 0),
-    scaffoldPos.offset(-scaffoldOffsetX, 0, 0)
-  ]
-
-  for (const candidate of candidates) {
-    if (candidate.equals(scaffoldPos)) continue
-    if (!hasSolidNonSandBlockAt(candidate)) continue
-
-    try {
-      await gotoAndStand(candidate)
-      return
-    } catch (err) {
-      // try next candidate
-    }
-  }
-}
-
-async function waitForClearArea (pos, timeoutMs = 5000) {
-  const start = Date.now()
-  while ((Date.now() - start) < timeoutMs) {
-    try {
-      assertNoEntityBlocking(pos)
-      return
-    } catch (err) {
-      await sleepTicks(10)
-    }
-  }
-
-  throw new Error(`Area blocked too long at ${pos.toString()}`)
-}
-
-function requireCobblestoneForLayer (layerIndex) {
-  const cellsPerLayer = 16 * 16
-  const spineNeeded = (layerIndex + 1) * 4
-  const conservativeScaffoldNeeded = cfg.removeScaffold ? cellsPerLayer : 0
-  const needed = spineNeeded + conservativeScaffoldNeeded
-  const cobble = itemCountByName('cobblestone')
-
-  if (cobble < needed) {
-    throw new Error(`Insufficient cobblestone for layer ${layerIndex + 1}. needed~=${needed}, have=${cobble}`)
-  }
-}
-
-function assertNoEntityBlocking (targetPos, radius = 1.2) {
-  const entities = Object.values(bot.entities)
-  for (const entity of entities) {
-    if (!entity || !entity.position) continue
-    if (bot.entity && entity.id === bot.entity.id) continue
-
-    if (entity.position.distanceTo(targetPos) < radius) {
-      throw new Error(`Entity blocking placement area at ${targetPos.toString()}`)
-    }
-  }
-}
-
-
-function loadCheckpoint () {
-  if (!fs.existsSync(CHECKPOINT_PATH)) {
-    return { layer: 0, cell: 0 }
-  }
-
-  try {
-    const raw = fs.readFileSync(CHECKPOINT_PATH, 'utf8')
-    const parsed = JSON.parse(raw)
-    return {
-      layer: clampInteger(parsed.layer, 0, cfg.layers, 0),
-      cell: clampInteger(parsed.cell, 0, 255, 0)
-    }
-  } catch (err) {
-    console.warn(`[WARN] Failed to read checkpoint file: ${err.message}. Starting from beginning.`)
-    return { layer: 0, cell: 0 }
-  }
-}
-
-function flushCheckpointWrite () {
-  if (clearCheckpointRequested) return
-  if (checkpointWritePending || pendingCheckpointPayload == null) return
-
-  checkpointWritePending = true
-  const payload = pendingCheckpointPayload
-  pendingCheckpointPayload = null
-
-  fs.writeFile(CHECKPOINT_PATH, payload, err => {
-    checkpointWritePending = false
-    if (err) {
-      console.warn(`[WARN] Failed to save checkpoint: ${err.message}`)
-    }
-
-    if (clearCheckpointRequested) {
-      if (fs.existsSync(CHECKPOINT_PATH)) {
-        fs.unlinkSync(CHECKPOINT_PATH)
-      }
-      return
-    }
-
-    if (pendingCheckpointPayload != null) {
-      flushCheckpointWrite()
-    }
-  })
-}
-
-function saveCheckpoint (layer, cell) {
-  if (clearCheckpointRequested) return
-  pendingCheckpointPayload = JSON.stringify({ layer, cell }, null, 2)
-  flushCheckpointWrite()
-}
-
-function clearCheckpoint () {
-  clearCheckpointRequested = true
-  pendingCheckpointPayload = null
-
-  if (!checkpointWritePending && fs.existsSync(CHECKPOINT_PATH)) {
-    fs.unlinkSync(CHECKPOINT_PATH)
-  }
-}
-
-function requireLoaded (pos) {
-  const block = bot.blockAt(pos)
-  if (!block) {
-    throw new Error(`Chunk not loaded at ${pos.toString()}`)
-  }
-  return block
-}
-
-
-function hasSolidNonSandBlockAt (pos) {
-  const block = bot.blockAt(pos)
-  return Boolean(block && block.boundingBox === 'block' && block.name !== 'sand')
-}
-
-async function waitForBlockName (pos, expectedName, attempts = 6, delayTicks = 1) {
-  for (let i = 0; i < attempts; i++) {
-    const block = bot.blockAt(pos)
-    if (block && block.name === expectedName) return block
-    await sleepTicks(delayTicks)
-  }
-
-  return bot.blockAt(pos)
+  return lastBlock
 }
 
 async function moveOffScaffoldIfNeeded (scaffoldPos, sandPos, scaffoldOffsetX) {
@@ -1028,24 +625,33 @@ async function enterSurvivalFromLobby () {
   console.log('[INFO] Waiting for lobby to finish loading...')
   await bot.waitForTicks(100)
 
-  const before = bot.entity.position.clone()
-  console.log('[INFO] Sending /survival...')
-  bot.chat('/survival')
+  const initialPos = bot.entity.position.clone()
+  const maxAttempts = 3
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    console.log(`[INFO] Sending /survival (attempt ${attempt}/${maxAttempts})...`)
+    bot.chat('/survival')
 
-  await bot.waitForTicks(20)
-  const maxWaitTicks = 220
-  let waited = 0
-  while (waited < maxWaitTicks && bot.entity.position.distanceTo(before) < 5) {
-    await bot.waitForTicks(10)
-    waited += 10
+    await bot.waitForTicks(20)
+    let waitedTicks = 0
+    const maxWaitTicks = 220
+    while (waitedTicks < maxWaitTicks && bot.entity.position.distanceTo(initialPos) < 5) {
+      await bot.waitForTicks(10)
+      waitedTicks += 10
+    }
+
+    if (bot.entity.position.distanceTo(initialPos) >= 5) {
+      console.log('[INFO] Survival transfer stage complete.')
+      return
+    }
+
+    if (attempt < maxAttempts) {
+      console.log('[WARN] Teleport not detected yet. Retrying /survival...')
+      await sleepMs(1200)
+    }
   }
 
-  if (bot.entity.position.distanceTo(before) < 5) {
-    console.log('[WARN] Teleport movement not detected after /survival. Continuing with fallback delay.')
-    await bot.waitForTicks(100)
-  }
-
-  console.log('[INFO] Survival transfer stage complete.')
+  console.log('[WARN] Teleport movement not detected after retries. Continuing with fallback delay.')
+  await bot.waitForTicks(100)
 }
 
 
@@ -1117,6 +723,9 @@ function createBot () {
   lagMode = false
   lagStateLogged = false
   isStopping = false
+  checkpointWritePending = false
+  pendingCheckpointPayload = null
+  clearCheckpointRequested = false
 
   bot = mineflayer.createBot({
     host: cfg.host,
