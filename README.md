@@ -28,6 +28,16 @@ Mineflayer-based Minecraft Java bot that builds chunk-aligned cactus farm layers
 
 Project quality controls and gates are documented in `QUALITY.md` (ISO/IEC 5055-aligned practical checklist).
 
+## Project structure
+
+- `bot.js` — lifecycle, reconnect, login flow, and orchestration
+- `config.js` — config defaults + validation
+- `checkpoint.js` — checkpoint persistence manager
+- `inventory.js` — item counts/equip/inventory requirements
+- `refillManager.js` — opportunistic nearby-container refill logic
+- `humanizer.js` — subtle random head movement behavior
+- `QUALITY.md` — quality controls and gates
+
 ## Setup
 
 1. Install Node.js 18+.
