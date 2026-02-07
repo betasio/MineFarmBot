@@ -140,8 +140,6 @@ function requireCobblestoneForLayer (layerIndex) {
   if (cobble < needed) {
     throw new Error(`Insufficient cobblestone for layer ${layerIndex + 1}. needed~=${needed}, have=${cobble}`)
   }
-
-  throw new Error(`Area blocked too long at ${pos.toString()}`)
 }
 
 function assertNoEntityBlocking (targetPos, radius = 1.2) {
@@ -215,6 +213,8 @@ function clearCheckpoint () {
   if (!checkpointWritePending && fs.existsSync(CHECKPOINT_PATH)) {
     fs.unlinkSync(CHECKPOINT_PATH)
   }
+
+  throw new Error(`Area blocked too long at ${pos.toString()}`)
 }
 
 function requireLoaded (pos) {
@@ -358,19 +358,29 @@ async function ensureVerticalSpine (origin, layerIndex) {
 
 
 function isCellCompleted (sandPos, scaffoldOffsetX) {
-  const sandBlock = bot.blockAt(sandPos)
+  let sandBlock
+  let cactusBlock
+  let preferredString
+  let oppositeString
+
+  try {
+    sandBlock = requireLoaded(sandPos)
+    const cactusPos = sandPos.offset(0, 1, 0)
+    cactusBlock = requireLoaded(cactusPos)
+
+    const preferredStringPos = cactusPos.offset(scaffoldOffsetX, 0, 0)
+    preferredString = requireLoaded(preferredStringPos)
+
+    const oppositeStringPos = cactusPos.offset(-scaffoldOffsetX, 0, 0)
+    oppositeString = requireLoaded(oppositeStringPos)
+  } catch (err) {
+    return false
+  }
+
   if (!isBlockName(sandBlock, 'sand')) return false
-
-  const cactusPos = sandPos.offset(0, 1, 0)
-  const cactusBlock = bot.blockAt(cactusPos)
   if (!isBlockName(cactusBlock, 'cactus')) return false
-
-  const preferredStringPos = cactusPos.offset(scaffoldOffsetX, 0, 0)
-  const preferredString = bot.blockAt(preferredStringPos)
   if (isBlockName(preferredString, 'tripwire')) return true
 
-  const oppositeStringPos = cactusPos.offset(-scaffoldOffsetX, 0, 0)
-  const oppositeString = bot.blockAt(oppositeStringPos)
   return isBlockName(oppositeString, 'tripwire')
 }
 
