@@ -128,6 +128,8 @@ function requireInventoryForLayer (remainingCells) {
   if (sand < needed || cactus < needed || stringCount < needed) {
     throw new Error(`Insufficient inventory for remaining ${remainingCells} cells (+${buffer} buffer). sand=${sand}, cactus=${cactus}, string=${stringCount}`)
   }
+
+  throw new Error(`Area blocked too long at ${pos.toString()}`)
 }
 
 function requireCobblestoneForLayer (layerIndex) {
