@@ -56,6 +56,8 @@ npm start
 
 The bot prints clear stop messages if it detects unsafe movement, missing inventory, or disconnection.
 
+Progress checkpoints are written every 16 placements to `build-checkpoint.json` so a restart can resume from the last saved row.
+
 ## Config
 
 `config.json` fields:

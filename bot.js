@@ -22,6 +22,8 @@ const DEFAULT_CONFIG = {
   facingYawDegrees: 0
 }
 
+const CHECKPOINT_PATH = path.join(process.cwd(), 'build-checkpoint.json')
+
 function clampInteger (value, min, max, fallback) {
   const num = Number(value)
   if (!Number.isFinite(num)) return fallback
@@ -149,6 +151,57 @@ function assertNoEntityBlocking (targetPos, radius = 1.2) {
   }
 }
 
+
+function loadCheckpoint () {
+  if (!fs.existsSync(CHECKPOINT_PATH)) {
+    return { layer: 0, cell: 0 }
+  }
+
+  try {
+    const raw = fs.readFileSync(CHECKPOINT_PATH, 'utf8')
+    const parsed = JSON.parse(raw)
+    return {
+      layer: clampInteger(parsed.layer, 0, cfg.layers, 0),
+      cell: clampInteger(parsed.cell, 0, 255, 0)
+    }
+  } catch (err) {
+    console.warn(`[WARN] Failed to read checkpoint file: ${err.message}. Starting from beginning.`)
+    return { layer: 0, cell: 0 }
+  }
+}
+
+function saveCheckpoint (layer, cell) {
+  fs.writeFileSync(CHECKPOINT_PATH, JSON.stringify({ layer, cell }, null, 2))
+}
+
+function clearCheckpoint () {
+  if (fs.existsSync(CHECKPOINT_PATH)) {
+    fs.unlinkSync(CHECKPOINT_PATH)
+  }
+}
+
+function requireLoaded (pos) {
+  const block = bot.blockAt(pos)
+  if (!block) {
+    throw new Error(`Chunk not loaded at ${pos.toString()}`)
+  }
+  return block
+}
+
+async function waitForClearArea (pos, timeoutMs = 5000) {
+  const start = Date.now()
+  while ((Date.now() - start) < timeoutMs) {
+    try {
+      assertNoEntityBlocking(pos)
+      return
+    } catch (err) {
+      await sleepTicks(10)
+    }
+  }
+
+  throw new Error(`Area blocked too long at ${pos.toString()}`)
+}
+
 async function safeStop (reason) {
   if (isStopping) return
   isStopping = true
@@ -227,10 +280,7 @@ async function gotoAndStand (target) {
 
 async function placeBlockByName (referencePos, faceVec, itemName) {
   await equipItem(itemName)
-  const reference = bot.blockAt(referencePos)
-  if (!reference) {
-    throw new Error(`Cannot place ${itemName}; missing reference block at ${referencePos}`)
-  }
+  const reference = requireLoaded(referencePos)
 
   await bot.lookAt(reference.position.offset(0.5, 0.5, 0.5), true)
   await bot.placeBlock(reference, faceVec)
@@ -246,7 +296,7 @@ async function ensureVerticalSpine (origin, layerIndex) {
   const targetY = origin.y + (layerIndex * 3) - 1
 
   const basePos = new Vec3(spineX, baseY, spineZ)
-  const baseBlock = bot.blockAt(basePos)
+  const baseBlock = requireLoaded(basePos)
   if (!baseBlock || baseBlock.boundingBox !== 'block') {
     throw new Error(`Vertical spine base missing at ${basePos.toString()}. Place a starter cobblestone block there before running.`)
   }
@@ -254,7 +304,7 @@ async function ensureVerticalSpine (origin, layerIndex) {
   let highestConfirmedY = baseY
   for (let y = baseY + 1; y <= targetY; y++) {
     const current = new Vec3(spineX, y, spineZ)
-    const existing = bot.blockAt(current)
+    const existing = requireLoaded(current)
     if (existing && existing.boundingBox === 'block') {
       highestConfirmedY = y
       continue
@@ -273,16 +323,16 @@ async function placeCactusStack (sandPos, scaffoldOffsetX) {
   const scaffoldPos = chooseScaffoldPos(sandPos, scaffoldOffsetX)
 
   await gotoAndStand(scaffoldPos)
-  const scaffoldBlock = bot.blockAt(scaffoldPos)
+  const scaffoldBlock = requireLoaded(scaffoldPos)
 
   if (!scaffoldBlock || scaffoldBlock.boundingBox !== 'block') {
-    const below = bot.blockAt(scaffoldPos.offset(0, -1, 0))
+    const below = requireLoaded(scaffoldPos.offset(0, -1, 0))
     if (!below || below.boundingBox !== 'block') {
       throw new Error(`Cannot scaffold at ${scaffoldPos}; no solid support below`)
     }
     await placeBlockByName(scaffoldPos.offset(0, -1, 0), new Vec3(0, 1, 0), 'cobblestone')
 
-    const placed = bot.blockAt(scaffoldPos)
+    const placed = requireLoaded(scaffoldPos)
     if (!placed || placed.boundingBox !== 'block') {
       throw new Error(`Scaffold placement failed at ${scaffoldPos}`)
     }
@@ -290,37 +340,37 @@ async function placeCactusStack (sandPos, scaffoldOffsetX) {
 
   await gotoAndStand(scaffoldPos)
 
-  assertNoEntityBlocking(sandPos)
+  await waitForClearArea(sandPos)
 
-  const sandBase = bot.blockAt(sandPos.offset(0, -1, 0))
+  const sandBase = requireLoaded(sandPos.offset(0, -1, 0))
   if (!sandBase || sandBase.boundingBox !== 'block') {
     throw new Error(`Cannot place sand at ${sandPos}; unsupported location`)
   }
 
-  const existingSand = bot.blockAt(sandPos)
+  const existingSand = requireLoaded(sandPos)
   if (!isBlockName(existingSand, 'sand')) {
     await placeBlockByName(sandPos.offset(0, -1, 0), new Vec3(0, 1, 0), 'sand')
   }
 
-  const sandBlock = bot.blockAt(sandPos)
+  const sandBlock = requireLoaded(sandPos)
   if (!isBlockName(sandBlock, 'sand')) {
     throw new Error(`Sand placement failed at ${sandPos}`)
   }
 
   const cactusPos = sandPos.offset(0, 1, 0)
-  assertNoEntityBlocking(cactusPos)
-  const existingCactus = bot.blockAt(cactusPos)
+  await waitForClearArea(cactusPos)
+  const existingCactus = requireLoaded(cactusPos)
   if (!isBlockName(existingCactus, 'cactus')) {
     await placeBlockByName(sandPos, new Vec3(0, 1, 0), 'cactus')
   }
 
   const stringPos = cactusPos.offset(scaffoldOffsetX, 0, 0)
-  assertNoEntityBlocking(stringPos)
-  const existingString = bot.blockAt(stringPos)
+  await waitForClearArea(stringPos)
+  const existingString = requireLoaded(stringPos)
   if (!existingString || existingString.name !== 'tripwire') {
     await placeBlockByName(cactusPos, new Vec3(scaffoldOffsetX, 0, 0), 'string')
 
-    const placedString = bot.blockAt(stringPos)
+    const placedString = requireLoaded(stringPos)
     if (!placedString || placedString.name !== 'tripwire') {
       throw new Error(`String placement failed at ${stringPos.toString()}`)
     }
@@ -407,8 +457,9 @@ function setupSafetyHooks () {
 
 async function runBuild () {
   const origin = new Vec3(cfg.origin.x, cfg.origin.y, cfg.origin.z)
+  const checkpoint = loadCheckpoint()
 
-  for (let layer = 0; layer < cfg.layers; layer++) {
+  for (let layer = checkpoint.layer; layer < cfg.layers; layer++) {
     const layerY = origin.y + (layer * 3)
     if (layerY > 319) {
       throw new Error(`Y limit exceeded at layer ${layer + 1} (targetY=${layerY})`)
@@ -418,9 +469,11 @@ async function runBuild () {
     await ensureVerticalSpine(origin, layer)
     requireCobblestoneForLayer(layer)
     const cells = buildGridTasks(origin, layer)
-    requireInventoryForLayer(cells.length)
+    const startCell = layer === checkpoint.layer ? checkpoint.cell : 0
+    const remainingFromStart = cells.length - startCell
+    requireInventoryForLayer(remainingFromStart)
 
-    for (let i = 0; i < cells.length; i++) {
+    for (let i = startCell; i < cells.length; i++) {
       const remaining = cells.length - i
       if (remaining % 16 === 0) {
         requireInventoryForLayer(remaining)
@@ -428,8 +481,19 @@ async function runBuild () {
 
       const task = cells[i]
       await placeCactusStack(task.sandPos, task.scaffoldOffsetX)
+
+      if ((i + 1) % 16 === 0) {
+        const nextCell = i + 1
+        if (nextCell >= cells.length) {
+          saveCheckpoint(layer + 1, 0)
+        } else {
+          saveCheckpoint(layer, nextCell)
+        }
+      }
     }
   }
+
+  clearCheckpoint()
 }
 
 bot.once('spawn', async () => {
