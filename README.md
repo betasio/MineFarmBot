@@ -44,6 +44,12 @@ cp config.example.json config.json
 npm start
 ```
 
+Optional structure guard:
+
+```bash
+npm run check:structure
+```
+
 
 ## Non-technical quick start
 
