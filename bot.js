@@ -74,6 +74,24 @@ function validateConfig (config) {
   }
 }
 
+const CHECKPOINT_PATH = path.join(process.cwd(), 'build-checkpoint.json')
+
+function clampInteger (value, min, max, fallback) {
+  const num = Number(value)
+  if (!Number.isFinite(num)) return fallback
+  return Math.max(min, Math.min(max, Math.floor(num)))
+}
+
+function validateConfig (config) {
+  return {
+    ...config,
+    layers: clampInteger(config.layers, 1, 128, DEFAULT_CONFIG.layers),
+    buildDelayTicks: clampInteger(config.buildDelayTicks, 1, 40, DEFAULT_CONFIG.buildDelayTicks),
+    removeScaffold: Boolean(config.removeScaffold),
+    facingYawDegrees: Number.isFinite(Number(config.facingYawDegrees)) ? Number(config.facingYawDegrees) : DEFAULT_CONFIG.facingYawDegrees
+  }
+}
+
 function loadConfig () {
   const configPath = path.join(process.cwd(), 'config.json')
   if (!fs.existsSync(configPath)) {
@@ -361,6 +379,112 @@ function loadCheckpoint () {
     console.warn(`[WARN] Failed to read checkpoint file: ${err.message}. Starting from beginning.`)
     return { layer: 0, cell: 0 }
   }
+}
+
+function flushCheckpointWrite () {
+  if (clearCheckpointRequested) return
+  if (checkpointWritePending || pendingCheckpointPayload == null) return
+
+  checkpointWritePending = true
+  const payload = pendingCheckpointPayload
+  pendingCheckpointPayload = null
+
+  fs.writeFile(CHECKPOINT_PATH, payload, err => {
+    checkpointWritePending = false
+    if (err) {
+      console.warn(`[WARN] Failed to save checkpoint: ${err.message}`)
+    }
+
+    if (clearCheckpointRequested) {
+      if (fs.existsSync(CHECKPOINT_PATH)) {
+        fs.unlinkSync(CHECKPOINT_PATH)
+      }
+      return
+    }
+
+    if (pendingCheckpointPayload != null) {
+      flushCheckpointWrite()
+    }
+  })
+}
+
+function saveCheckpoint (layer, cell) {
+  if (clearCheckpointRequested) return
+  pendingCheckpointPayload = JSON.stringify({ layer, cell }, null, 2)
+  flushCheckpointWrite()
+}
+
+function clearCheckpoint () {
+  clearCheckpointRequested = true
+  pendingCheckpointPayload = null
+
+  if (!checkpointWritePending && fs.existsSync(CHECKPOINT_PATH)) {
+    fs.unlinkSync(CHECKPOINT_PATH)
+  }
+}
+
+function requireLoaded (pos) {
+  const block = bot.blockAt(pos)
+  if (!block) {
+    throw new Error(`Chunk not loaded at ${pos.toString()}`)
+  }
+  return block
+}
+
+
+function hasSolidNonSandBlockAt (pos) {
+  const block = bot.blockAt(pos)
+  return Boolean(block && block.boundingBox === 'block' && block.name !== 'sand')
+}
+
+async function waitForBlockName (pos, expectedName, attempts = 8, delayTicks = 1) {
+  let lastBlock = null
+  for (let i = 0; i < attempts; i++) {
+    lastBlock = bot.blockAt(pos)
+    if (lastBlock && lastBlock.name === expectedName) return lastBlock
+    await sleepTicks(delayTicks)
+  }
+
+  return lastBlock
+}
+
+async function moveOffScaffoldIfNeeded (scaffoldPos, sandPos, scaffoldOffsetX) {
+  const standing = bot.entity.position.floored()
+  if (!standing.equals(scaffoldPos)) return
+
+  const candidates = [
+    chooseScaffoldPos(sandPos, -scaffoldOffsetX),
+    scaffoldPos.offset(0, 0, 1),
+    scaffoldPos.offset(0, 0, -1),
+    scaffoldPos.offset(scaffoldOffsetX, 0, 0),
+    scaffoldPos.offset(-scaffoldOffsetX, 0, 0)
+  ]
+
+  for (const candidate of candidates) {
+    if (candidate.equals(scaffoldPos)) continue
+    if (!hasSolidNonSandBlockAt(candidate)) continue
+
+    try {
+      await gotoAndStand(candidate)
+      return
+    } catch (err) {
+      // try next candidate
+    }
+  }
+}
+
+async function waitForClearArea (pos, timeoutMs = 5000) {
+  const start = Date.now()
+  while ((Date.now() - start) < timeoutMs) {
+    try {
+      assertNoEntityBlocking(pos)
+      return
+    } catch (err) {
+      await sleepTicks(10)
+    }
+  }
+
+  throw new Error(`Area blocked too long at ${pos.toString()}`)
 }
 
 function flushCheckpointWrite () {
