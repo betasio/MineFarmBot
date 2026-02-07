@@ -171,6 +171,8 @@ function loadCheckpoint () {
     console.warn(`[WARN] Failed to read checkpoint file: ${err.message}. Starting from beginning.`)
     return { layer: 0, cell: 0 }
   }
+
+  throw new Error(`Area blocked too long at ${pos.toString()}`)
 }
 
 function flushCheckpointWrite () {
@@ -213,8 +215,6 @@ function clearCheckpoint () {
   if (!checkpointWritePending && fs.existsSync(CHECKPOINT_PATH)) {
     fs.unlinkSync(CHECKPOINT_PATH)
   }
-
-  throw new Error(`Area blocked too long at ${pos.toString()}`)
 }
 
 function requireLoaded (pos) {
@@ -316,6 +316,11 @@ async function gotoAndStand (target) {
 }
 
 async function placeBlockByName (referencePos, faceVec, itemName) {
+  const available = itemCountByName(itemName)
+  if (available <= 0) {
+    throw new Error(`Insufficient inventory item during placement: ${itemName}`)
+  }
+
   await equipItem(itemName)
   const reference = requireLoaded(referencePos)
 
