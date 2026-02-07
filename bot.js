@@ -12,7 +12,7 @@ const DEFAULT_CONFIG = {
   port: 25565,
   username: 'CactusBuilderBot',
   password: null,
-  auth: 'offline',
+  auth: 'microsoft',
   version: false,
   layers: 18,
   buildDelayTicks: 3,
@@ -128,6 +128,8 @@ function requireInventoryForLayer (remainingCells) {
   if (sand < needed || cactus < needed || stringCount < needed) {
     throw new Error(`Insufficient inventory for remaining ${remainingCells} cells (+${buffer} buffer). sand=${sand}, cactus=${cactus}, string=${stringCount}`)
   }
+
+  throw new Error(`Area blocked too long at ${pos.toString()}`)
 }
 
 function requireCobblestoneForLayer (layerIndex) {
@@ -616,6 +618,31 @@ async function runBuild () {
   clearCheckpoint()
 }
 
+
+async function enterSurvivalFromLobby () {
+  console.log('[INFO] Waiting for lobby to finish loading...')
+  await bot.waitForTicks(100)
+
+  const before = bot.entity.position.clone()
+  console.log('[INFO] Sending /survival...')
+  bot.chat('/survival')
+
+  await bot.waitForTicks(20)
+  const maxWaitTicks = 220
+  let waited = 0
+  while (waited < maxWaitTicks && bot.entity.position.distanceTo(before) < 5) {
+    await bot.waitForTicks(10)
+    waited += 10
+  }
+
+  if (bot.entity.position.distanceTo(before) < 5) {
+    console.log('[WARN] Teleport movement not detected after /survival. Continuing with fallback delay.')
+    await bot.waitForTicks(100)
+  }
+
+  console.log('[INFO] Survival transfer stage complete.')
+}
+
 bot.once('spawn', async () => {
   console.log('[INFO] Spawned. Preparing build routine...')
   console.log(`[INFO] Config: layers=${cfg.layers}, buildDelayTicks=${cfg.buildDelayTicks}, removeScaffold=${cfg.removeScaffold}`)
@@ -628,14 +655,7 @@ bot.once('spawn', async () => {
     startLagMonitor()
     setupSafetyHooks()
 
-    console.log('[INFO] Waiting for lobby to finish loading...')
-    await bot.waitForTicks(100)
-
-    console.log('[INFO] Sending /survival...')
-    bot.chat('/survival')
-
-    await bot.waitForTicks(120)
-    console.log('[INFO] Should now be in survival.')
+    await enterSurvivalFromLobby()
 
     if (!hasSolidFooting()) {
       throw new Error('Bot spawned without solid non-sand footing')

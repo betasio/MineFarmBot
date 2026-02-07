@@ -3,7 +3,7 @@
   "port": 25565,
   "username": "CactusBuilderBot",
   "password": null,
-  "auth": "offline",
+  "auth": "microsoft",
   "version": false,
   "layers": 18,
   "buildDelayTicks": 3,

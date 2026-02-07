@@ -51,12 +51,14 @@ npm start
 3. Open Command Prompt in the folder.
 4. Run `npm install` once.
 5. Run `copy config.example.json config.json` and edit `config.json` in Notepad.
-6. Set at least: server `host`, `port`, `username`, and farm `origin` / `safePlatform`.
-7. Start with `npm start` (the bot will auto-wait in lobby, run `/survival`, then begin building).
+6. Sign in with your Microsoft account by keeping `auth` as `microsoft` in `config.json` (default).
+7. Set at least: server `host`, `port`, `username`, and farm `origin` / `safePlatform`.
+8. Start with `npm start` (the bot will auto-wait in lobby, run `/survival`, then begin building).
+
 
 The bot prints clear stop messages if it detects unsafe movement, missing inventory, or disconnection.
 
-On spawn, the bot waits for login/lobby load, sends `/survival`, waits for teleport, then starts building automatically.
+On spawn, the bot waits for login/lobby load, sends `/survival`, waits for teleport movement, then starts building automatically.
 
 Progress checkpoints are written every 16 placements to `build-checkpoint.json` so a restart can resume from the last saved row.
 
@@ -64,7 +66,7 @@ Progress checkpoints are written every 16 placements to `build-checkpoint.json` 
 
 `config.json` fields:
 
-- `host`, `port`, `username`, `password`, `auth`, `version`
+- `host`, `port`, `username`, `password`, `auth`, `version` (`auth` default is `microsoft`)
 - `layers` (number of layers, recommended 15–20)
 - `buildDelayTicks` (base delay between placements)
 - `removeScaffold` (`true`/`false`, default `false` for safer high-layer runs)
