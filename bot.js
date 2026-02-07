@@ -72,6 +72,7 @@ let lagStateLogged = false
 let checkpointWritePending = false
 let pendingCheckpointPayload = null
 let clearCheckpointRequested = false
+let lastHumanLookAtMs = 0
 
 function ticksToMs (ticks) {
   return Math.max(0, Math.floor((ticks / TICKS_PER_SECOND) * 1000))
@@ -83,7 +84,9 @@ function sleepTicks (ticks) {
 
 async function randomHeadMovement () {
   if (!bot || Math.random() > 0.03) return
+  if ((Date.now() - lastHumanLookAtMs) < 2000) return
 
+  lastHumanLookAtMs = Date.now()
   const yaw = bot.entity.yaw + ((Math.random() - 0.5) * 1.2)
   const pitch = (Math.random() - 0.5) * 0.4
 
@@ -136,6 +139,121 @@ function requireInventoryForLayer (remainingCells) {
 
   if (sand < needed || cactus < needed || stringCount < needed) {
     throw new Error(`Insufficient inventory for remaining ${remainingCells} cells (+${buffer} buffer). sand=${sand}, cactus=${cactus}, string=${stringCount}`)
+  }
+
+  try {
+    const raw = fs.readFileSync(CHECKPOINT_PATH, 'utf8')
+    const parsed = JSON.parse(raw)
+    return {
+      layer: clampInteger(parsed.layer, 0, cfg.layers, 0),
+      cell: clampInteger(parsed.cell, 0, 255, 0)
+    }
+  } catch (err) {
+    console.warn(`[WARN] Failed to read checkpoint file: ${err.message}. Starting from beginning.`)
+    return { layer: 0, cell: 0 }
+  }
+}
+
+function flushCheckpointWrite () {
+  if (clearCheckpointRequested) return
+  if (checkpointWritePending || pendingCheckpointPayload == null) return
+
+  checkpointWritePending = true
+  const payload = pendingCheckpointPayload
+  pendingCheckpointPayload = null
+
+  fs.writeFile(CHECKPOINT_PATH, payload, err => {
+    checkpointWritePending = false
+    if (err) {
+      console.warn(`[WARN] Failed to save checkpoint: ${err.message}`)
+    }
+
+    if (clearCheckpointRequested) {
+      if (fs.existsSync(CHECKPOINT_PATH)) {
+        fs.unlinkSync(CHECKPOINT_PATH)
+      }
+      return
+    }
+
+    if (pendingCheckpointPayload != null) {
+      flushCheckpointWrite()
+    }
+  })
+}
+
+function saveCheckpoint (layer, cell) {
+  if (clearCheckpointRequested) return
+  pendingCheckpointPayload = JSON.stringify({ layer, cell }, null, 2)
+  flushCheckpointWrite()
+}
+
+function clearCheckpoint () {
+  clearCheckpointRequested = true
+  pendingCheckpointPayload = null
+
+  if (!checkpointWritePending && fs.existsSync(CHECKPOINT_PATH)) {
+    fs.unlinkSync(CHECKPOINT_PATH)
+  }
+}
+
+function requireLoaded (pos) {
+  const block = bot.blockAt(pos)
+  if (!block) {
+    throw new Error(`Chunk not loaded at ${pos.toString()}`)
+  }
+  return block
+}
+
+
+function hasSolidNonSandBlockAt (pos) {
+  const block = bot.blockAt(pos)
+  return Boolean(block && block.boundingBox === 'block' && block.name !== 'sand')
+}
+
+async function waitForBlockName (pos, expectedName, attempts = 6, delayTicks = 1) {
+  for (let i = 0; i < attempts; i++) {
+    const block = bot.blockAt(pos)
+    if (block && block.name === expectedName) return block
+    await sleepTicks(delayTicks)
+  }
+
+  return bot.blockAt(pos)
+}
+
+async function moveOffScaffoldIfNeeded (scaffoldPos, sandPos, scaffoldOffsetX) {
+  const standing = bot.entity.position.floored()
+  if (!standing.equals(scaffoldPos)) return
+
+  const candidates = [
+    chooseScaffoldPos(sandPos, -scaffoldOffsetX),
+    scaffoldPos.offset(0, 0, 1),
+    scaffoldPos.offset(0, 0, -1),
+    scaffoldPos.offset(scaffoldOffsetX, 0, 0),
+    scaffoldPos.offset(-scaffoldOffsetX, 0, 0)
+  ]
+
+  for (const candidate of candidates) {
+    if (candidate.equals(scaffoldPos)) continue
+    if (!hasSolidNonSandBlockAt(candidate)) continue
+
+    try {
+      await gotoAndStand(candidate)
+      return
+    } catch (err) {
+      // try next candidate
+    }
+  }
+}
+
+async function waitForClearArea (pos, timeoutMs = 5000) {
+  const start = Date.now()
+  while ((Date.now() - start) < timeoutMs) {
+    try {
+      assertNoEntityBlocking(pos)
+      return
+    } catch (err) {
+      await sleepTicks(10)
+    }
   }
 
   throw new Error(`Area blocked too long at ${pos.toString()}`)
@@ -788,7 +906,8 @@ function handleReconnect (reason) {
 
   reconnectScheduled = true
   reconnectAttempts += 1
-  const delay = Math.min(5000 * reconnectAttempts, MAX_RECONNECT_DELAY)
+  const baseDelay = (4000 + Math.random() * 3000) * reconnectAttempts
+  const delay = Math.min(Math.floor(baseDelay), MAX_RECONNECT_DELAY)
   console.log(`[RECONNECT] Lost connection (${reason}). Attempt ${reconnectAttempts}. Reconnecting in ${Math.floor(delay / 1000)}s`)
 
   setTimeout(() => {
