@@ -1,327 +1,596 @@
 'use strict'
 
-const fs = require('fs')
-const path = require('path')
 const mineflayer = require('mineflayer')
 const { pathfinder, Movements, goals } = require('mineflayer-pathfinder')
 const { Vec3 } = require('vec3')
+const readline = require('readline')
+
+const { validateConfig, loadConfig } = require('./config')
+const { createCheckpointManager } = require('./checkpoint')
+const { createHumanizer } = require('./humanizer')
+const { createInventoryManager } = require('./inventory')
+const { createRefillManager } = require('./refillManager')
+const { createBuildController } = require('./buildController')
 
 const TICKS_PER_SECOND = 20
-const DEFAULT_CONFIG = {
-  host: 'localhost',
-  port: 25565,
-  username: 'CactusBuilderBot',
-  password: null,
-  auth: 'offline',
-  version: false,
-  layers: 16,
-  buildDelayTicks: 3,
-  removeScaffold: true,
-  safePlatform: { x: 0, y: 64, z: 0 },
-  origin: { x: 0, y: 64, z: 0 },
-  facingYawDegrees: 0
-}
+const MAX_RECONNECT_DELAY = 60_000
 
-function loadConfig () {
-  const configPath = path.join(process.cwd(), 'config.json')
-  if (!fs.existsSync(configPath)) {
-    console.warn('[WARN] config.json not found. Falling back to defaults.')
-    return DEFAULT_CONFIG
+function createBotEngine (config = validateConfig(loadConfig())) {
+  const cfg = config
+
+  let bot
+  let reconnectAttempts = 0
+  let reconnectScheduled = false
+  let isStopping = false
+  let lastPhysics = null
+  let lagSamples = []
+  let lagMode = false
+  let lagStateLogged = false
+
+  const listeners = {
+    log: new Set(),
+    status: new Set(),
+    warning: new Set(),
+    error: new Set()
   }
 
-  const raw = fs.readFileSync(configPath, 'utf8')
-  const parsed = JSON.parse(raw)
-  return {
-    ...DEFAULT_CONFIG,
-    ...parsed,
-    origin: { ...DEFAULT_CONFIG.origin, ...(parsed.origin || {}) },
-    safePlatform: { ...DEFAULT_CONFIG.safePlatform, ...(parsed.safePlatform || {}) }
-  }
-}
-
-const cfg = loadConfig()
-const bot = mineflayer.createBot({
-  host: cfg.host,
-  port: cfg.port,
-  username: cfg.username,
-  password: cfg.password,
-  auth: cfg.auth,
-  version: cfg.version || undefined
-})
-
-bot.loadPlugin(pathfinder)
-
-let isStopping = false
-let lastPhysics = null
-let lagSamples = []
-let lagMode = false
-
-function ticksToMs (ticks) {
-  return Math.max(0, Math.floor((ticks / TICKS_PER_SECOND) * 1000))
-}
-
-function sleepTicks (ticks) {
-  return new Promise(resolve => setTimeout(resolve, ticksToMs(ticks)))
-}
-
-function yawFromDegrees (degrees) {
-  return (degrees * Math.PI) / 180
-}
-
-function itemCountByName (name) {
-  return bot.inventory.items().filter(i => i.name === name).reduce((sum, i) => sum + i.count, 0)
-}
-
-function hasSolidFooting () {
-  const below = bot.blockAt(bot.entity.position.offset(0, -1, 0).floored())
-  return Boolean(below && below.boundingBox === 'block' && below.name !== 'sand')
-}
-
-async function equipItem (itemName, destination = 'hand') {
-  const item = bot.inventory.items().find(i => i.name === itemName)
-  if (!item) {
-    throw new Error(`Missing inventory item: ${itemName}`)
-  }
-  await bot.equip(item, destination)
-}
-
-function isBlockName (block, name) {
-  return block && block.name === name
-}
-
-function requireInventoryForLayer (remainingCells) {
-  const sand = itemCountByName('sand')
-  const cactus = itemCountByName('cactus')
-  const cobble = itemCountByName('cobblestone')
-  const stringCount = itemCountByName('string')
-
-  if (sand < remainingCells || cactus < remainingCells || cobble < remainingCells || stringCount < remainingCells) {
-    throw new Error(`Insufficient inventory for remaining ${remainingCells} cells. sand=${sand}, cactus=${cactus}, cobblestone=${cobble}, string=${stringCount}`)
-  }
-}
-
-async function safeStop (reason) {
-  if (isStopping) return
-  isStopping = true
-
-  console.error(`[STOP] ${reason}`)
-  try {
-    await moveToSafePlatform()
-    await bot.look(yawFromDegrees(cfg.facingYawDegrees), 0, true)
-  } catch (err) {
-    console.error(`[WARN] Failed to move to safe platform during stop: ${err.message}`)
+  function emit (type, payload) {
+    for (const fn of listeners[type]) fn(payload)
   }
 
-  bot.quit(`[MineFarmBot] ${reason}`)
-}
-
-async function moveToSafePlatform () {
-  const pos = new Vec3(cfg.safePlatform.x, cfg.safePlatform.y, cfg.safePlatform.z)
-  const goal = new goals.GoalBlock(pos.x, pos.y, pos.z)
-  await bot.pathfinder.goto(goal)
-
-  if (!hasSolidFooting()) {
-    throw new Error('Safe platform does not provide solid, non-sand footing')
+  function onLog (fn) {
+    listeners.log.add(fn)
+    return () => listeners.log.delete(fn)
   }
-}
 
-function buildGridPositions (origin, layerIndex) {
-  const y = origin.y + (layerIndex * 3)
-  const cells = []
+  function onStatus (fn) {
+    listeners.status.add(fn)
+    return () => listeners.status.delete(fn)
+  }
 
-  for (let dz = 0; dz < 16; dz++) {
-    for (let dx = 0; dx < 16; dx++) {
-      cells.push(new Vec3(origin.x + dx, y, origin.z + dz))
+  function onWarning (fn) {
+    listeners.warning.add(fn)
+    return () => listeners.warning.delete(fn)
+  }
+
+  function onError (fn) {
+    listeners.error.add(fn)
+    return () => listeners.error.delete(fn)
+  }
+
+  function log (message) {
+    console.log(message)
+    emit('log', message)
+  }
+
+  function warn (message) {
+    console.warn(message)
+    emit('warning', message)
+  }
+
+  function reportError (message) {
+    console.error(message)
+    emit('error', message)
+  }
+
+  const checkpointManager = createCheckpointManager(cfg.layers)
+
+  function getBot () {
+    return bot
+  }
+
+  function ticksToMs (ticks) {
+    return Math.max(0, Math.floor((ticks / TICKS_PER_SECOND) * 1000))
+  }
+
+  function sleepTicks (ticks) {
+    return new Promise(resolve => setTimeout(resolve, ticksToMs(ticks)))
+  }
+
+  function sleepMs (ms) {
+    return new Promise(resolve => setTimeout(resolve, Math.max(0, Math.floor(ms))))
+  }
+
+  function yawFromDegrees (degrees) {
+    return (degrees * Math.PI) / 180
+  }
+
+  function isBlockName (block, name) {
+    return block && block.name === name
+  }
+
+  const humanizer = createHumanizer({ getBot, sleepTicks })
+  const inventory = createInventoryManager({ getBot, cfg })
+
+  function hasSolidFooting () {
+    const below = bot.blockAt(bot.entity.position.offset(0, -1, 0).floored())
+    return Boolean(
+      below && below.boundingBox === 'block' && !below.transparent &&
+      !below.name.includes('fence') && !below.name.includes('wall') && below.name !== 'sand'
+    )
+  }
+
+  const refillManager = createRefillManager({
+    getBot,
+    cfg,
+    goals,
+    itemCountByName: inventory.itemCountByName,
+    hasRequiredInventoryForRemaining: inventory.hasRequiredInventoryForRemaining,
+    requireInventoryForLayer: inventory.requireInventoryForLayer,
+    isBusyPlacing: humanizer.isBusyPlacing,
+    isStableForRefill: () => hasSolidFooting(),
+    sleepTicks,
+    log
+  })
+
+  function requireLoaded (pos) {
+    const block = bot.blockAt(pos)
+    if (!block) throw new Error(`Chunk not loaded at ${pos.toString()}`)
+    return block
+  }
+
+  function hasSolidNonSandBlockAt (pos) {
+    const block = bot.blockAt(pos)
+    return Boolean(block && block.boundingBox === 'block' && block.name !== 'sand')
+  }
+
+  async function waitForBlockName (pos, expectedName, attempts = 8, delayTicks = 1) {
+    let lastBlock = null
+    for (let i = 0; i < attempts; i++) {
+      lastBlock = bot.blockAt(pos)
+      if (lastBlock && lastBlock.name === expectedName) return lastBlock
+      await sleepTicks(delayTicks)
     }
+    return lastBlock
   }
 
-  return cells
-}
-
-function chooseStringAnchor (cactusPos) {
-  return cactusPos.offset(1, 1, 1)
-}
-
-function chooseScaffoldPos (sandPos) {
-  return sandPos.offset(0, -1, 0)
-}
-
-async function gotoAndStand (target) {
-  const goal = new goals.GoalGetToBlock(target.x, target.y + 1, target.z)
-  await bot.pathfinder.goto(goal)
-
-  if (!hasSolidFooting()) {
-    throw new Error(`Unsafe footing at ${bot.entity.position.floored().toString()}`)
-  }
-
-  const below = bot.blockAt(bot.entity.position.offset(0, -1, 0).floored())
-  if (isBlockName(below, 'sand')) {
-    throw new Error('Safety violation: bot stood on sand')
-  }
-}
-
-async function placeBlockByName (referencePos, faceVec, itemName) {
-  await equipItem(itemName)
-  const reference = bot.blockAt(referencePos)
-  if (!reference) {
-    throw new Error(`Cannot place ${itemName}; missing reference block at ${referencePos}`)
-  }
-
-  await bot.placeBlock(reference, faceVec)
-  await sleepTicks(cfg.buildDelayTicks + (lagMode ? 2 : 0))
-}
-
-async function placeCactusStack (sandPos) {
-  const scaffoldPos = chooseScaffoldPos(sandPos)
-
-  await gotoAndStand(scaffoldPos)
-  const scaffoldBlock = bot.blockAt(scaffoldPos)
-
-  if (!scaffoldBlock || scaffoldBlock.boundingBox !== 'block') {
-    const below = bot.blockAt(scaffoldPos.offset(0, -1, 0))
-    if (!below || below.boundingBox !== 'block') {
-      throw new Error(`Cannot scaffold at ${scaffoldPos}; no solid support below`)
-    }
-    await placeBlockByName(scaffoldPos.offset(0, -1, 0), new Vec3(0, 1, 0), 'cobblestone')
-  }
-
-  await gotoAndStand(scaffoldPos)
-
-  const sandBase = bot.blockAt(sandPos.offset(0, -1, 0))
-  if (!sandBase || sandBase.boundingBox !== 'block') {
-    throw new Error(`Cannot place sand at ${sandPos}; unsupported location`)
-  }
-
-  const existingSand = bot.blockAt(sandPos)
-  if (!isBlockName(existingSand, 'sand')) {
-    await placeBlockByName(sandPos.offset(0, -1, 0), new Vec3(0, 1, 0), 'sand')
-  }
-
-  const sandBlock = bot.blockAt(sandPos)
-  if (!isBlockName(sandBlock, 'sand')) {
-    throw new Error(`Sand placement failed at ${sandPos}`)
-  }
-
-  const cactusPos = sandPos.offset(0, 1, 0)
-  const existingCactus = bot.blockAt(cactusPos)
-  if (!isBlockName(existingCactus, 'cactus')) {
-    await placeBlockByName(sandPos, new Vec3(0, 1, 0), 'cactus')
-  }
-
-  const stringAnchor = chooseStringAnchor(cactusPos)
-  const anchorBlock = bot.blockAt(stringAnchor)
-  if (!anchorBlock || anchorBlock.boundingBox !== 'block') {
-    throw new Error(`String anchor missing at ${stringAnchor}; ensure farm template provides a valid adjacent collision block`)
-  }
-
-  const stringPos = cactusPos.offset(1, 1, 0)
-  const existingString = bot.blockAt(stringPos)
-  if (!isBlockName(existingString, 'tripwire')) {
-    await placeBlockByName(stringAnchor, new Vec3(0, 0, -1), 'string')
-  }
-
-  if (cfg.removeScaffold) {
-    const botPos = bot.entity.position.floored()
-    if (!botPos.equals(scaffoldPos)) {
-      const scaf = bot.blockAt(scaffoldPos)
-      if (isBlockName(scaf, 'cobblestone')) {
-        await bot.dig(scaf, true)
-        await sleepTicks(1)
+  function assertNoEntityBlocking (targetPos, radius = 1.2) {
+    for (const entity of Object.values(bot.entities)) {
+      if (!entity || !entity.position) continue
+      if (bot.entity && entity.id === bot.entity.id) continue
+      if (entity.position.distanceTo(targetPos) < radius) {
+        throw new Error(`Entity blocking placement area at ${targetPos.toString()}`)
       }
     }
   }
-}
 
-function setupMovement () {
-  const defaultMove = new Movements(bot)
-  defaultMove.allowSprinting = false
-  defaultMove.allowParkour = false
-  defaultMove.canDig = true
-  defaultMove.maxDropDown = 1
-  defaultMove.allow1by1towers = false
-  defaultMove.allowEntityDetection = true
-  bot.pathfinder.setMovements(defaultMove)
-}
-
-function startLagMonitor () {
-  bot.on('time', () => {
-    const now = Date.now()
-    if (lastPhysics != null) {
-      const delta = now - lastPhysics
-      lagSamples.push(delta)
-      if (lagSamples.length > 25) lagSamples.shift()
-
-      const avg = lagSamples.reduce((a, b) => a + b, 0) / lagSamples.length
-      lagMode = avg > 70
+  async function waitForClearArea (pos, timeoutMs = 5000) {
+    const start = Date.now()
+    while ((Date.now() - start) < timeoutMs) {
+      try {
+        assertNoEntityBlocking(pos)
+        return
+      } catch (err) {
+        await sleepTicks(10)
+      }
     }
-    lastPhysics = now
-  })
-}
+    throw new Error(`Area blocked too long at ${pos.toString()}`)
+  }
 
-function setupSafetyHooks () {
-  let lastY = null
-  bot.on('physicsTick', () => {
+  async function moveToSafePlatform () {
+    const pos = new Vec3(cfg.safePlatform.x, cfg.safePlatform.y, cfg.safePlatform.z)
+    await bot.pathfinder.goto(new goals.GoalBlock(pos.x, pos.y, pos.z))
+    if (!hasSolidFooting()) throw new Error('Safe platform does not provide solid, non-sand footing')
+  }
+
+  async function safeStop (reason) {
     if (isStopping) return
-    const y = bot.entity.position.y
-    if (lastY != null && (lastY - y) > 1.01) {
-      safeStop(`Fall detected. drop=${(lastY - y).toFixed(2)} blocks`)
+    isStopping = true
+    reportError(`[STOP] ${reason}`)
+    try {
+      await moveToSafePlatform()
+      await bot.look(yawFromDegrees(cfg.facingYawDegrees), 0, true)
+    } catch (err) {
+      warn(`[WARN] Failed to move to safe platform during stop: ${err.message}`)
     }
-    lastY = y
-  })
+    if (bot.player) bot.quit(`[MineFarmBot] ${reason}`)
+  }
 
-  bot.on('end', () => {
-    console.log('[INFO] Disconnected from server.')
-  })
-
-  bot.on('kicked', reason => {
-    console.error(`[KICKED] ${reason}`)
-  })
-
-  bot.on('error', err => {
-    console.error(`[ERROR] ${err.message}`)
-    if (!isStopping) {
-      safeStop(`Unhandled bot error: ${err.message}`)
+  function buildGridTasks (origin, layerIndex) {
+    const y = origin.y + (layerIndex * 3)
+    const cells = []
+    for (let dz = 0; dz < 16; dz++) {
+      const leftToRight = dz % 2 === 0
+      const xValues = leftToRight ? [...Array(16).keys()] : [...Array(16).keys()].reverse()
+      for (const dx of xValues) {
+        const scaffoldOffsetX = leftToRight ? 1 : -1
+        cells.push({ sandPos: new Vec3(origin.x + dx, y, origin.z + dz), scaffoldOffsetX })
+      }
     }
-  })
-}
+    return cells
+  }
 
-async function runBuild () {
-  const origin = new Vec3(cfg.origin.x, cfg.origin.y, cfg.origin.z)
+  const chooseScaffoldPos = (sandPos, xOffset) => sandPos.offset(xOffset, 0, 0)
 
-  for (let layer = 0; layer < cfg.layers; layer++) {
-    console.log(`[INFO] Starting layer ${layer + 1}/${cfg.layers}`)
-    const cells = buildGridPositions(origin, layer)
-    requireInventoryForLayer(cells.length)
+  async function gotoAndStand (target) {
+    const belowTarget = bot.blockAt(target)
+    if (isBlockName(belowTarget, 'sand')) throw new Error(`Refusing to stand on sand at ${target.toString()}`)
+    await bot.pathfinder.goto(new goals.GoalGetToBlock(target.x, target.y + 1, target.z))
 
-    for (let i = 0; i < cells.length; i++) {
-      const remaining = cells.length - i
-      if (remaining % 16 === 0) {
-        requireInventoryForLayer(remaining)
+    const standing = bot.entity.position.floored()
+    if (standing.x !== target.x || standing.z !== target.z || Math.abs(standing.y - target.y) > 1) {
+      throw new Error(`Pathfinder stopped at ${standing.toString()} instead of ${target.toString()}`)
+    }
+    if (!hasSolidFooting()) throw new Error(`Unsafe footing at ${bot.entity.position.floored().toString()}`)
+    const below = bot.blockAt(bot.entity.position.offset(0, -1, 0).floored())
+    if (isBlockName(below, 'sand')) throw new Error('Safety violation: bot stood on sand')
+  }
+
+  async function placeBlockByName (referencePos, faceVec, itemName) {
+    if (inventory.itemCountByName(itemName) <= 0) {
+      throw new Error(`Insufficient inventory item during placement: ${itemName}`)
+    }
+
+    humanizer.setBusyPlacing(true)
+    try {
+      await inventory.equipItem(itemName)
+      const reference = requireLoaded(referencePos)
+      await bot.lookAt(reference.position.offset(0.5, 0.5, 0.5), true)
+      await bot.placeBlock(reference, faceVec)
+      await sleepTicks(cfg.buildDelayTicks + (lagMode ? 2 : 0))
+    } finally {
+      humanizer.setBusyPlacing(false)
+    }
+
+    await humanizer.randomHeadMovement()
+  }
+
+  async function ensureVerticalSpine (origin, layerIndex) {
+    const spineX = origin.x - 2
+    const spineZ = origin.z
+    const baseY = origin.y - 1
+    const targetY = origin.y + (layerIndex * 3) - 1
+
+    const basePos = new Vec3(spineX, baseY, spineZ)
+    const baseBlock = requireLoaded(basePos)
+    if (!baseBlock || baseBlock.boundingBox !== 'block') {
+      throw new Error(`Vertical spine base missing at ${basePos.toString()}. Place a starter cobblestone block there before running.`)
+    }
+
+    let highestConfirmedY = baseY
+    for (let y = baseY + 1; y <= targetY; y++) {
+      const current = new Vec3(spineX, y, spineZ)
+      const existing = requireLoaded(current)
+      if (existing && existing.boundingBox === 'block') {
+        highestConfirmedY = y
+        continue
+      }
+      const standPos = new Vec3(spineX, highestConfirmedY, spineZ)
+      await gotoAndStand(standPos)
+      await placeBlockByName(standPos, new Vec3(0, 1, 0), 'cobblestone')
+      highestConfirmedY = y
+    }
+
+    await gotoAndStand(new Vec3(spineX, highestConfirmedY, spineZ))
+  }
+
+  function isCellCompleted (sandPos, scaffoldOffsetX) {
+    try {
+      const sandBlock = requireLoaded(sandPos)
+      const cactusPos = sandPos.offset(0, 1, 0)
+      const cactusBlock = requireLoaded(cactusPos)
+      const preferredString = requireLoaded(cactusPos.offset(scaffoldOffsetX, 0, 0))
+      const oppositeString = requireLoaded(cactusPos.offset(-scaffoldOffsetX, 0, 0))
+      return isBlockName(sandBlock, 'sand') && isBlockName(cactusBlock, 'cactus') &&
+        (isBlockName(preferredString, 'tripwire') || isBlockName(oppositeString, 'tripwire'))
+    } catch {
+      return false
+    }
+  }
+
+  async function moveOffScaffoldIfNeeded (scaffoldPos, sandPos, scaffoldOffsetX) {
+    if (!bot.entity.position.floored().equals(scaffoldPos)) return
+    const candidates = [
+      chooseScaffoldPos(sandPos, -scaffoldOffsetX),
+      scaffoldPos.offset(0, 0, 1),
+      scaffoldPos.offset(0, 0, -1),
+      scaffoldPos.offset(scaffoldOffsetX, 0, 0),
+      scaffoldPos.offset(-scaffoldOffsetX, 0, 0)
+    ]
+
+    for (const candidate of candidates) {
+      if (candidate.equals(scaffoldPos) || !hasSolidNonSandBlockAt(candidate)) continue
+      try {
+        await gotoAndStand(candidate)
+        return
+      } catch {}
+    }
+  }
+
+  async function placeCactusStack (sandPos, scaffoldOffsetX) {
+    if (isCellCompleted(sandPos, scaffoldOffsetX)) return
+
+    const scaffoldPos = chooseScaffoldPos(sandPos, scaffoldOffsetX)
+    await gotoAndStand(scaffoldPos)
+    const scaffoldBlock = requireLoaded(scaffoldPos)
+
+    if (!scaffoldBlock || scaffoldBlock.boundingBox !== 'block') {
+      const below = requireLoaded(scaffoldPos.offset(0, -1, 0))
+      if (!below || below.boundingBox !== 'block') throw new Error(`Cannot scaffold at ${scaffoldPos}; no solid support below`)
+      await placeBlockByName(scaffoldPos.offset(0, -1, 0), new Vec3(0, 1, 0), 'cobblestone')
+      const placed = await waitForBlockName(scaffoldPos, 'cobblestone')
+      if (!placed || placed.boundingBox !== 'block') throw new Error(`Scaffold placement failed at ${scaffoldPos}`)
+    }
+
+    await gotoAndStand(scaffoldPos)
+    await waitForClearArea(sandPos)
+
+    const sandBase = requireLoaded(sandPos.offset(0, -1, 0))
+    if (!sandBase || sandBase.boundingBox !== 'block') throw new Error(`Cannot place sand at ${sandPos}; unsupported location`)
+
+    if (!isBlockName(requireLoaded(sandPos), 'sand')) {
+      await placeBlockByName(sandPos.offset(0, -1, 0), new Vec3(0, 1, 0), 'sand')
+    }
+    if (!isBlockName(await waitForBlockName(sandPos, 'sand'), 'sand')) throw new Error(`Sand placement failed at ${sandPos}`)
+
+    const cactusPos = sandPos.offset(0, 1, 0)
+    await waitForClearArea(cactusPos)
+    if (!isBlockName(requireLoaded(cactusPos), 'cactus')) {
+      await placeBlockByName(sandPos, new Vec3(0, 1, 0), 'cactus')
+      if (!isBlockName(await waitForBlockName(cactusPos, 'cactus'), 'cactus')) throw new Error(`Cactus placement failed at ${cactusPos}`)
+    }
+
+    const stringPos = cactusPos.offset(scaffoldOffsetX, 0, 0)
+    await waitForClearArea(stringPos)
+    if (!isBlockName(requireLoaded(stringPos), 'tripwire')) {
+      await placeBlockByName(cactusPos, new Vec3(scaffoldOffsetX, 0, 0), 'string')
+      if (!isBlockName(await waitForBlockName(stringPos, 'tripwire'), 'tripwire')) throw new Error(`String placement failed at ${stringPos}`)
+    }
+
+    if (cfg.removeScaffold) {
+      await moveOffScaffoldIfNeeded(scaffoldPos, sandPos, scaffoldOffsetX)
+      if (!bot.entity.position.floored().equals(scaffoldPos)) {
+        const scaf = bot.blockAt(scaffoldPos)
+        if (isBlockName(scaf, 'cobblestone')) {
+          await bot.dig(scaf, true)
+          await sleepTicks(1)
+        }
+      }
+    }
+  }
+
+  function setupMovement () {
+    const defaultMove = new Movements(bot)
+    defaultMove.allowSprinting = false
+    defaultMove.allowParkour = false
+    defaultMove.canDig = false
+    defaultMove.maxDropDown = 1
+    defaultMove.allow1by1towers = false
+    defaultMove.allowEntityDetection = true
+    if (Object.prototype.hasOwnProperty.call(defaultMove, 'allowDiagonalPathing')) defaultMove.allowDiagonalPathing = false
+    bot.pathfinder.setMovements(defaultMove)
+  }
+
+  function startLagMonitor () {
+    bot.on('physicsTick', () => {
+      const now = Date.now()
+      if (lastPhysics != null) {
+        const delta = now - lastPhysics
+        lagSamples.push(delta)
+        if (lagSamples.length > 25) lagSamples.shift()
+        const avg = lagSamples.reduce((a, b) => a + b, 0) / lagSamples.length
+        lagMode = avg > 70
+        if (lagMode && !lagStateLogged) {
+          warn('[WARN] Server lag detected. Slowing placement rate.')
+          lagStateLogged = true
+        } else if (!lagMode && lagStateLogged) {
+          log('[INFO] Lag recovered. Returning to normal placement rate.')
+          lagStateLogged = false
+        }
+      }
+      lastPhysics = now
+    })
+  }
+
+  function setupSafetyHooks () {
+    let lastY = null
+    bot.on('physicsTick', () => {
+      if (isStopping) return
+      const y = bot.entity.position.y
+      if (lastY != null && (lastY - y) > 1.01) safeStop(`Fall detected. drop=${(lastY - y).toFixed(2)} blocks`)
+      lastY = y
+    })
+  }
+
+  async function enterSurvivalFromLobby () {
+    log('[INFO] Waiting for lobby to finish loading...')
+    await bot.waitForTicks(100)
+
+    const initialPos = bot.entity.position.clone()
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      log(`[INFO] Sending /survival (attempt ${attempt}/3)...`)
+      bot.chat('/survival')
+      await bot.waitForTicks(20)
+
+      let waitedTicks = 0
+      while (waitedTicks < 220 && bot.entity.position.distanceTo(initialPos) < 5) {
+        await bot.waitForTicks(10)
+        waitedTicks += 10
       }
 
-      const sandPos = cells[i]
-      await placeCactusStack(sandPos)
+      if (bot.entity.position.distanceTo(initialPos) >= 5) {
+        log('[INFO] Survival transfer stage complete.')
+        return
+      }
+
+      if (attempt < 3) {
+        warn('[WARN] Teleport not detected yet. Retrying /survival...')
+        await sleepMs(1200)
+      }
     }
+
+    warn('[WARN] Teleport movement not detected after retries. Continuing with fallback delay.')
+    await bot.waitForTicks(100)
+  }
+
+  const buildController = createBuildController({
+    cfg,
+    checkpointManager,
+    inventory,
+    refillManager,
+    buildGridTasks,
+    ensureVerticalSpine,
+    placeCactusStack,
+    onLog: entry => {
+      if (entry.level === 'warn') warn(`[WARN] ${entry.message}`)
+      else if (entry.level === 'error') reportError(`[ERROR] ${entry.message}`)
+      else log(`[INFO] ${entry.message}`)
+    }
+  })
+
+  buildController.on('progress', status => emit('status', status))
+  buildController.on('state', status => emit('status', status))
+
+  async function startBuild () {
+    if (!bot || !bot.player) {
+      warn('[WARN] Bot is not connected yet.')
+      return
+    }
+
+    try {
+      await buildController.start(new Vec3(cfg.origin.x, cfg.origin.y, cfg.origin.z))
+      await moveToSafePlatform()
+      await bot.look(yawFromDegrees(cfg.facingYawDegrees), 0, true)
+      bot.quit('[MineFarmBot] Build completed successfully')
+    } catch (err) {
+      await safeStop(err.message)
+    }
+  }
+
+  function pauseBuild () { return buildController.pause() }
+  function resumeBuild () { return buildController.resume() }
+  function stopBuild () {
+    const accepted = buildController.stop()
+    if (accepted) safeStop('Stop requested by controller')
+    return accepted
+  }
+  function getStatus () {
+    return {
+      connected: Boolean(bot && bot.player),
+      reconnectAttempts,
+      build: buildController.getStatus()
+    }
+  }
+
+  function handleReconnect (reason) {
+    if (isStopping || reconnectScheduled) return
+    reconnectScheduled = true
+    reconnectAttempts += 1
+    const baseDelay = (4000 + Math.random() * 3000) * reconnectAttempts
+    const delay = Math.min(Math.floor(baseDelay), MAX_RECONNECT_DELAY)
+    log(`[RECONNECT] Lost connection (${reason}). Attempt ${reconnectAttempts}. Reconnecting in ${Math.floor(delay / 1000)}s`)
+    setTimeout(() => {
+      reconnectScheduled = false
+      connect()
+    }, delay)
+  }
+
+  function registerBotEvents () {
+    bot.once('login', () => {
+      reconnectAttempts = 0
+      reconnectScheduled = false
+    })
+
+    bot.once('spawn', async () => {
+      reconnectAttempts = 0
+      reconnectScheduled = false
+
+      log('[INFO] Spawned and connected. Waiting for start command...')
+      log(`[INFO] Config: layers=${cfg.layers}, buildDelayTicks=${cfg.buildDelayTicks}, removeScaffold=${cfg.removeScaffold}`)
+
+      try {
+        setupMovement()
+        startLagMonitor()
+        setupSafetyHooks()
+        await enterSurvivalFromLobby()
+
+        if (!hasSolidFooting()) {
+          warn('[WARN] Bot spawned without solid non-sand footing. Fix position, then run start.')
+        }
+      } catch (err) {
+        reportError(`[ERROR] Startup warning: ${err.message}`)
+      }
+    })
+
+    bot.on('end', () => {
+      log('[INFO] Disconnected from server.')
+      handleReconnect('end')
+    })
+
+    bot.on('kicked', reason => {
+      reportError(`[KICKED] ${reason}`)
+      handleReconnect('kicked')
+    })
+
+    bot.on('error', err => {
+      reportError(`[ERROR] ${err.message}`)
+      handleReconnect(`error: ${err.message}`)
+    })
+  }
+
+  function connect () {
+    if (bot) {
+      try {
+        bot.removeAllListeners()
+        bot.quit('[MineFarmBot] Reinitializing connection')
+      } catch {}
+    }
+
+    lastPhysics = null
+    lagSamples = []
+    lagMode = false
+    lagStateLogged = false
+    isStopping = false
+    checkpointManager.resetState()
+    humanizer.reset()
+    refillManager.reset()
+
+    bot = mineflayer.createBot({
+      host: cfg.host,
+      port: cfg.port,
+      username: cfg.username,
+      password: cfg.password,
+      auth: cfg.auth,
+      version: cfg.version || undefined
+    })
+
+    bot.loadPlugin(pathfinder)
+    registerBotEvents()
+  }
+
+  return {
+    connect,
+    startBuild,
+    pauseBuild,
+    resumeBuild,
+    stopBuild,
+    getStatus,
+    onLog,
+    onStatus,
+    onWarning,
+    onError
   }
 }
 
-bot.once('spawn', async () => {
-  console.log('[INFO] Spawned. Preparing build routine...')
+function runCli () {
+  const engine = createBotEngine()
+  engine.connect()
 
-  try {
-    setupMovement()
-    startLagMonitor()
-    setupSafetyHooks()
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
+  console.log('[CLI] Commands: start | pause | resume | stop | status | quit')
+  rl.on('line', async line => {
+    const cmd = line.trim().toLowerCase()
+    if (cmd === 'start') await engine.startBuild()
+    else if (cmd === 'pause') engine.pauseBuild()
+    else if (cmd === 'resume') engine.resumeBuild()
+    else if (cmd === 'stop') engine.stopBuild()
+    else if (cmd === 'status') console.log(engine.getStatus())
+    else if (cmd === 'quit' || cmd === 'exit') process.exit(0)
+  })
+}
 
-    if (!hasSolidFooting()) {
-      throw new Error('Bot spawned without solid non-sand footing')
-    }
+if (require.main === module) runCli()
 
-    await runBuild()
-    await moveToSafePlatform()
-    await bot.look(yawFromDegrees(cfg.facingYawDegrees), 0, true)
-    bot.quit('[MineFarmBot] Build completed successfully')
-  } catch (err) {
-    await safeStop(err.message)
-  }
-})
+module.exports = {
+  createBotEngine
+}
