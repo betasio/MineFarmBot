@@ -30,7 +30,12 @@ Project quality controls and gates are documented in `QUALITY.md` (ISO/IEC 5055-
 
 ## Project structure
 
+<<<<<<< codex/create-minecraft-building-bot-with-mineflayer-we5vls
+- `bot.js` — bot engine + lifecycle/reconnect orchestration + CLI command bridge
+- `buildController.js` — runtime build state machine (`start/pause/resume/stop`) and progress reporting
+=======
 - `bot.js` — lifecycle, reconnect, login flow, and orchestration
+>>>>>>> main
 - `config.js` — config defaults + validation
 - `checkpoint.js` — checkpoint persistence manager
 - `inventory.js` — item counts/equip/inventory requirements
@@ -69,12 +74,21 @@ npm start
 5. Run `copy config.example.json config.json` and edit `config.json` in Notepad.
 6. Sign in with your Microsoft account by keeping `auth` as `microsoft` in `config.json` (default).
 7. Set at least: server `host`, `port`, `username`, and farm `origin` / `safePlatform`.
+<<<<<<< codex/create-minecraft-building-bot-with-mineflayer-we5vls
+8. Start with `npm start`.
+9. After connection, use CLI commands: `start`, `pause`, `resume`, `stop`, `status`.
+=======
 8. Start with `npm start` (the bot will auto-wait in lobby, run `/survival`, then begin building).
+>>>>>>> main
 
 
 The bot prints clear stop messages if it detects unsafe movement, missing inventory, or disconnection.
 
+<<<<<<< codex/create-minecraft-building-bot-with-mineflayer-we5vls
+On spawn, the bot waits for login/lobby load, retries `/survival` if needed, waits for teleport movement, and then idles until a `start` command is issued.
+=======
 On spawn, the bot waits for login/lobby load, retries `/survival` if needed, waits for teleport movement, then starts building automatically.
+>>>>>>> main
 
 If disconnected/kicked/error occurs unexpectedly, the bot auto-reconnects with backoff and resumes from checkpoint.
 
