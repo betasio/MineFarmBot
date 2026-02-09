@@ -1,6 +1,6 @@
 'use strict'
 
-function createRefillManager ({ getBot, cfg, goals, itemCountByName, hasRequiredInventoryForRemaining, requireInventoryForLayer, isBusyPlacing, sleepTicks, log }) {
+function createRefillManager ({ getBot, cfg, goals, itemCountByName, hasRequiredInventoryForRemaining, requireInventoryForLayer, isBusyPlacing, isStableForRefill, sleepTicks, log }) {
   let lastRefillAttemptAtMs = 0
   let lastLowInventoryWarnAtMs = 0
   const ignoredContainerUntilMs = new Map()
@@ -20,13 +20,39 @@ function createRefillManager ({ getBot, cfg, goals, itemCountByName, hasRequired
       itemCountByName('cobblestone') < t.cobblestone
   }
 
-  function refillTargetsByItem () {
+  
+function getItemStackSize (itemName) {
+  const bot = getBot()
+  const itemInfo = bot.registry.itemsByName[itemName]
+  return itemInfo && Number.isFinite(itemInfo.stackSize) ? itemInfo.stackSize : 64
+}
+
+function freeSpaceForItem (itemName) {
+  const bot = getBot()
+  const stackSize = getItemStackSize(itemName)
+  let free = 0
+
+  for (const slot of bot.inventory.slots) {
+    if (!slot) {
+      free += stackSize
+      continue
+    }
+
+    if (slot.name === itemName) {
+      free += Math.max(0, stackSize - slot.count)
+    }
+  }
+
+  return free
+}
+
+function refillTargetsByItem () {
     const stacks = cfg.refill.targetStacks
     return {
-      sand: stacks.sand * 64,
-      cactus: stacks.cactus * 64,
-      string: stacks.string * 64,
-      cobblestone: stacks.cobblestone * 64
+      sand: stacks.sand * getItemStackSize('sand'),
+      cactus: stacks.cactus * getItemStackSize('cactus'),
+      string: stacks.string * getItemStackSize('string'),
+      cobblestone: stacks.cobblestone * getItemStackSize('cobblestone')
     }
   }
 
@@ -74,12 +100,19 @@ function createRefillManager ({ getBot, cfg, goals, itemCountByName, hasRequired
   async function gotoContainerForInteraction (containerBlock) {
     const bot = getBot()
     const pos = containerBlock.position
-    await bot.pathfinder.goto(new goals.GoalNear(pos.x, pos.y, pos.z, 1))
 
-    const dist = bot.entity.position.distanceTo(pos.offset(0.5, 0.5, 0.5))
-    if (dist > 4) {
-      throw new Error(`Could not get close enough to container at ${pos.toString()}`)
+    let lastErr = null
+    for (const radius of [1, 2]) {
+      try {
+        await bot.pathfinder.goto(new goals.GoalNear(pos.x, pos.y, pos.z, radius))
+        const dist = bot.entity.position.distanceTo(pos.offset(0.5, 0.5, 0.5))
+        if (dist <= 4.5) return
+      } catch (err) {
+        lastErr = err
+      }
     }
+
+    throw new Error(lastErr ? `Could not get close enough to container at ${pos.toString()}: ${lastErr.message}` : `Could not get close enough to container at ${pos.toString()}`)
   }
 
   async function withdrawItemIfNeeded (container, itemName, targetCount) {
@@ -95,7 +128,10 @@ function createRefillManager ({ getBot, cfg, goals, itemCountByName, hasRequired
       .reduce((sum, i) => sum + i.count, 0)
     if (available <= 0) return 0
 
-    const want = Math.min(targetCount - current, available)
+    const free = freeSpaceForItem(itemName)
+    if (free <= 0) return 0
+
+    const want = Math.min(targetCount - current, available, free)
     if (want <= 0) return 0
 
     await container.withdraw(itemInfo.id, null, want)
@@ -106,6 +142,7 @@ function createRefillManager ({ getBot, cfg, goals, itemCountByName, hasRequired
     const bot = getBot()
     if (!cfg.refill.enabled) return false
     if (!bot || isBusyPlacing()) return false
+    if (!isStableForRefill()) return false
     if (!force && !needsRefillByThreshold()) return false
 
     if (typeof bot.pathfinder.isMoving === 'function' && bot.pathfinder.isMoving()) return false

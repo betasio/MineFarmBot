@@ -68,6 +68,7 @@ const refillManager = createRefillManager({
   hasRequiredInventoryForRemaining: inventory.hasRequiredInventoryForRemaining,
   requireInventoryForLayer: inventory.requireInventoryForLayer,
   isBusyPlacing: humanizer.isBusyPlacing,
+  isStableForRefill: () => hasSolidFooting(),
   sleepTicks,
   log: msg => console.log(msg)
 })
