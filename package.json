@@ -5,7 +5,8 @@
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js",
-    "check": "node --check bot.js"
+    "check": "node --check bot.js && node scripts/check-duplicate-functions.js",
+    "check:structure": "node scripts/check-duplicate-functions.js"
   },
   "dependencies": {
     "mineflayer": "^4.20.1",
