@@ -38,6 +38,7 @@ function startUiServer ({ engine, cfg }) {
   const port = guiConfig.port || 8787
   const publicDir = path.join(__dirname, 'public')
   const clients = new Set()
+  const publicDir = path.join(__dirname, 'public')
 
   const server = http.createServer((req, res) => {
     const reqUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`)
