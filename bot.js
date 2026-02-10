@@ -119,9 +119,9 @@ function createBotEngine (config = validateConfig(loadConfig())) {
   }
 
   function getConnectionState () {
-    if (bot && bot.player) return 'connected'
-    if (bot) return 'connecting'
-    return 'disconnected'
+    if (bot && bot.player) return 'online'
+    if (reconnectScheduled) return 'reconnecting'
+    return 'offline'
   }
 
   function getStatusPayload () {
@@ -136,15 +136,16 @@ function createBotEngine (config = validateConfig(loadConfig())) {
       host: cfg.host,
       port: cfg.port,
       username: cfg.username,
+      ping: getPingValue(),
+      lagMode,
       reconnectAttempts,
+      uptimeMs,
+      coordinates: position,
+      dimension: bot && bot.game ? bot.game.dimension : null,
       reconnectScheduled,
       reconnectDelayMs: nextReconnectDelayMs,
       reconnectAt: nextReconnectAt,
-      lagMode,
-      ping: getPingValue(),
       position,
-      dimension: bot && bot.game ? bot.game.dimension : null,
-      uptimeMs,
       build: buildController.getStatus(),
       inventory: inventory.getInventorySnapshot(),
       refill: refillManager.getRefillStatus()
