@@ -58,19 +58,43 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     return () => listeners.error.delete(fn)
   }
 
+  function createLogEntry (level, message, timestamp = Date.now()) {
+    return { level, message, timestamp }
+  }
+
+  function emitLogEntry (entry) {
+    const payload = {
+      level: entry.level,
+      message: entry.message,
+      timestamp: entry.timestamp ?? Date.now()
+    }
+    if (payload.level === 'warn') emit('warning', payload)
+    else if (payload.level === 'error') emit('error', payload)
+    else emit('log', payload)
+  }
+
+  function handleLogEntry (entry) {
+    const payload = {
+      level: entry.level,
+      message: entry.message,
+      timestamp: entry.timestamp ?? Date.now()
+    }
+    if (payload.level === 'warn') console.warn(payload.message)
+    else if (payload.level === 'error') console.error(payload.message)
+    else console.log(payload.message)
+    emitLogEntry(payload)
+  }
+
   function log (message) {
-    console.log(message)
-    emit('log', message)
+    handleLogEntry(createLogEntry('info', message))
   }
 
   function warn (message) {
-    console.warn(message)
-    emit('warning', message)
+    handleLogEntry(createLogEntry('warn', message))
   }
 
   function reportError (message) {
-    console.error(message)
-    emit('error', message)
+    handleLogEntry(createLogEntry('error', message))
   }
 
   const checkpointManager = createCheckpointManager(cfg.layers)
@@ -431,11 +455,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     buildGridTasks,
     ensureVerticalSpine,
     placeCactusStack,
-    onLog: entry => {
-      if (entry.level === 'warn') warn(`[WARN] ${entry.message}`)
-      else if (entry.level === 'error') reportError(`[ERROR] ${entry.message}`)
-      else log(`[INFO] ${entry.message}`)
-    }
+    onLog: entry => handleLogEntry(entry)
   })
 
   buildController.on('progress', status => emit('status', status))
