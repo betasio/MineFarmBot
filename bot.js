@@ -11,6 +11,7 @@ const { createHumanizer } = require('./humanizer')
 const { createInventoryManager } = require('./inventory')
 const { createRefillManager } = require('./refillManager')
 const { createBuildController } = require('./buildController')
+const { startUiServer } = require('./ui/server')
 
 const TICKS_PER_SECOND = 20
 const MAX_RECONNECT_DELAY = 60_000
@@ -667,8 +668,10 @@ function createBotEngine (config = validateConfig(loadConfig())) {
 }
 
 function runCli () {
-  const engine = createBotEngine()
+  const cfg = validateConfig(loadConfig())
+  const engine = createBotEngine(cfg)
   engine.connect()
+  const uiServer = startUiServer({ engine, cfg })
 
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
   console.log('[CLI] Commands: start | pause | resume | stop | status | quit')
@@ -680,6 +683,11 @@ function runCli () {
     else if (cmd === 'stop') engine.stopBuild()
     else if (cmd === 'status') console.log(engine.getStatus())
     else if (cmd === 'quit' || cmd === 'exit') process.exit(0)
+  })
+
+  process.on('SIGINT', () => {
+    uiServer.close()
+    process.exit(0)
   })
 }
 

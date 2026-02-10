@@ -19,6 +19,11 @@
     "z": 0
   },
   "facingYawDegrees": 0,
+  "gui": {
+    "enabled": true,
+    "host": "0.0.0.0",
+    "port": 8787
+  },
   "refill": {
     "enabled": true,
     "radius": 7,

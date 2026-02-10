@@ -62,7 +62,12 @@ npm start
 
 ## GUI operations (primary)
 
-The GUI is the primary operator surface. Start the bot with `npm start`, then open the GUI URL shown in the startup logs (look for the `GUI:` line) in a browser on the same machine. Use the GUI for all routine operations and monitoring; the CLI remains available as a secondary/debug path only. 
+The bot now exposes a lightweight GUI transport (HTTP + SSE) for a browser-based UI. Start the bot with `npm start`, then open the GUI URL shown in the startup logs (look for the `[GUI] Listening` line) in a browser on the same machine. Use the GUI for all routine operations and monitoring; the CLI remains available as a secondary/debug path only.
+
+**GUI transport endpoints**
+
+- `GET /status` — JSON snapshot of current state.
+- `GET /events` — Server-Sent Events (SSE) stream (`status`, `log`, `warning`, `error`).
 
 ### Operator controls
 
@@ -116,6 +121,10 @@ Progress checkpoints are written every 16 placements to `build-checkpoint.json` 
 - `origin` (`x,y,z`) base corner for the 16×16 chunk footprint
 - `safePlatform` (`x,y,z`) post-build / emergency retreat location
 - `facingYawDegrees` final direction before logout
+- `gui` transport settings:
+  - `enabled` (turn GUI transport on/off)
+  - `host` bind host for the HTTP server
+  - `port` bind port for the HTTP server
 - `refill` settings:
   - `enabled` (turn opportunistic refill on/off)
   - `radius` (nearby container scan radius)
