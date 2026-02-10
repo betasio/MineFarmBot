@@ -51,9 +51,16 @@ function startUiServer ({ engine, cfg }) {
   }
 
   const unsubStatus = engine.onStatus(status => sendToClients('status', status))
-  const unsubLog = engine.onLog(entry => sendToClients('log', entry))
-  const unsubWarn = engine.onWarning(entry => sendToClients('warning', entry))
-  const unsubError = engine.onError(entry => sendToClients('error', entry))
+  const forwardLog = (entry) => sendToClients('log', entry)
+  const unsubLog = engine.onLog(forwardLog)
+  const unsubWarn = engine.onWarning(entry => {
+    forwardLog(entry)
+    sendToClients('warning', entry)
+  })
+  const unsubError = engine.onError(entry => {
+    forwardLog(entry)
+    sendToClients('error', entry)
+  })
 
   server.listen(port, host, () => {
     const urlHost = host === '0.0.0.0' ? 'localhost' : host

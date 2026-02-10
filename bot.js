@@ -198,7 +198,8 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     isBusyPlacing: humanizer.isBusyPlacing,
     isStableForRefill: () => hasSolidFooting(),
     sleepTicks,
-    log,
+    info: log,
+    warn,
     onRefillStatus: () => emitStatus()
   })
 

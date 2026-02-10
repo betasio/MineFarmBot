@@ -1,6 +1,18 @@
 'use strict'
 
-function createRefillManager ({ getBot, cfg, goals, itemCountByName, hasRequiredInventoryForRemaining, requireInventoryForLayer, isBusyPlacing, isStableForRefill, sleepTicks, log, onRefillStatus }) {
+function createRefillManager ({ getBot, cfg, goals, itemCountByName, hasRequiredInventoryForRemaining, requireInventoryForLayer, isBusyPlacing, isStableForRefill, sleepTicks, log, info, warn, onLog, onRefillStatus }) {
+  const emitInfo = typeof info === 'function'
+    ? info
+    : (message) => {
+        if (typeof onLog === 'function') onLog({ level: 'info', message })
+        else if (typeof log === 'function') log(message)
+      }
+  const emitWarn = typeof warn === 'function'
+    ? warn
+    : (message) => {
+        if (typeof onLog === 'function') onLog({ level: 'warn', message })
+        else if (typeof log === 'function') log(message)
+      }
   let lastRefillAttemptAtMs = 0
   let lastLowInventoryWarnAtMs = 0
   let lastRefillSuccessAtMs = null
@@ -87,7 +99,7 @@ function refillTargetsByItem () {
     const now = Date.now()
     if ((now - lastLowInventoryWarnAtMs) < 45000) return
     lastLowInventoryWarnAtMs = now
-    log(`[WARN] Materials low. Place a chest/barrel nearby to refill. sand=${itemCountByName('sand')}, cactus=${itemCountByName('cactus')}, string=${itemCountByName('string')}, cobblestone=${itemCountByName('cobblestone')}`)
+    emitWarn(`Materials low. Place a chest/barrel nearby to refill. sand=${itemCountByName('sand')}, cactus=${itemCountByName('cactus')}, string=${itemCountByName('string')}, cobblestone=${itemCountByName('cobblestone')}`)
   }
 
   function pruneIgnoredContainers () {
@@ -206,7 +218,7 @@ function refillTargetsByItem () {
         const totalTaken = taken.sand + taken.cactus + taken.string + taken.cobblestone
         if (totalTaken > 0) {
           lastRefillSuccessAtMs = Date.now()
-          log(`[INFO] Refill complete from ${containerBlock.name}: +${taken.sand} sand, +${taken.cactus} cactus, +${taken.string} string, +${taken.cobblestone} cobblestone.`)
+          emitInfo(`Refill complete from ${containerBlock.name}: +${taken.sand} sand, +${taken.cactus} cactus, +${taken.string} string, +${taken.cobblestone} cobblestone.`)
           return true
         }
 
@@ -217,7 +229,7 @@ function refillTargetsByItem () {
       }
     } catch (err) {
       ignoredContainerUntilMs.set(containerKey, Date.now() + 15000)
-      log(`[WARN] Refill attempt failed: ${err.message}`)
+      emitWarn(`Refill attempt failed: ${err.message}`)
       await sleepTicks(1)
       return false
     } finally {
