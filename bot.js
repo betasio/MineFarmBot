@@ -26,6 +26,11 @@ function createBotEngine (config = validateConfig(loadConfig())) {
   let lagSamples = []
   let lagMode = false
   let lagStateLogged = false
+  let statusInterval = null
+  let connectionStartedAt = null
+  let lastUptimeMs = null
+  let nextReconnectAt = null
+  let nextReconnectDelayMs = null
 
   const listeners = {
     log: new Set(),
@@ -101,6 +106,51 @@ function createBotEngine (config = validateConfig(loadConfig())) {
 
   function getBot () {
     return bot
+  }
+
+  function getPingValue () {
+    if (!bot) return null
+    if (bot.player && typeof bot.player.ping === 'number') return bot.player.ping
+    if (typeof bot.getPing === 'function') {
+      const ping = bot.getPing()
+      return typeof ping === 'number' ? ping : null
+    }
+    return null
+  }
+
+  function getConnectionState () {
+    if (bot && bot.player) return 'connected'
+    if (bot) return 'connecting'
+    return 'disconnected'
+  }
+
+  function getStatusPayload () {
+    const connected = Boolean(bot && bot.player)
+    const position = bot && bot.entity && bot.entity.position
+      ? { x: bot.entity.position.x, y: bot.entity.position.y, z: bot.entity.position.z }
+      : null
+    const uptimeMs = connectionStartedAt ? (Date.now() - connectionStartedAt) : lastUptimeMs
+    return {
+      connectionState: getConnectionState(),
+      connected,
+      host: cfg.host,
+      port: cfg.port,
+      username: cfg.username,
+      reconnectAttempts,
+      reconnectScheduled,
+      reconnectDelayMs: nextReconnectDelayMs,
+      reconnectAt: nextReconnectAt,
+      lagMode,
+      ping: getPingValue(),
+      position,
+      dimension: bot && bot.game ? bot.game.dimension : null,
+      uptimeMs,
+      build: buildController.getStatus()
+    }
+  }
+
+  function emitStatus () {
+    emit('status', getStatusPayload())
   }
 
   function ticksToMs (ticks) {
@@ -485,11 +535,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     return accepted
   }
   function getStatus () {
-    return {
-      connected: Boolean(bot && bot.player),
-      reconnectAttempts,
-      build: buildController.getStatus()
-    }
+    return getStatusPayload()
   }
 
   function handleReconnect (reason) {
@@ -498,9 +544,14 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     reconnectAttempts += 1
     const baseDelay = (4000 + Math.random() * 3000) * reconnectAttempts
     const delay = Math.min(Math.floor(baseDelay), MAX_RECONNECT_DELAY)
+    nextReconnectDelayMs = delay
+    nextReconnectAt = Date.now() + delay
     log(`[RECONNECT] Lost connection (${reason}). Attempt ${reconnectAttempts}. Reconnecting in ${Math.floor(delay / 1000)}s`)
+    emitStatus()
     setTimeout(() => {
       reconnectScheduled = false
+      nextReconnectDelayMs = null
+      nextReconnectAt = null
       connect()
     }, delay)
   }
@@ -509,11 +560,15 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     bot.once('login', () => {
       reconnectAttempts = 0
       reconnectScheduled = false
+      connectionStartedAt = Date.now()
+      lastUptimeMs = null
+      emitStatus()
     })
 
     bot.once('spawn', async () => {
       reconnectAttempts = 0
       reconnectScheduled = false
+      emitStatus()
 
       log('[INFO] Spawned and connected. Waiting for start command...')
       log(`[INFO] Config: layers=${cfg.layers}, buildDelayTicks=${cfg.buildDelayTicks}, removeScaffold=${cfg.removeScaffold}`)
@@ -534,16 +589,25 @@ function createBotEngine (config = validateConfig(loadConfig())) {
 
     bot.on('end', () => {
       log('[INFO] Disconnected from server.')
+      if (connectionStartedAt) lastUptimeMs = Date.now() - connectionStartedAt
+      connectionStartedAt = null
+      emitStatus()
       handleReconnect('end')
     })
 
     bot.on('kicked', reason => {
       reportError(`[KICKED] ${reason}`)
+      if (connectionStartedAt) lastUptimeMs = Date.now() - connectionStartedAt
+      connectionStartedAt = null
+      emitStatus()
       handleReconnect('kicked')
     })
 
     bot.on('error', err => {
       reportError(`[ERROR] ${err.message}`)
+      if (connectionStartedAt) lastUptimeMs = Date.now() - connectionStartedAt
+      connectionStartedAt = null
+      emitStatus()
       handleReconnect(`error: ${err.message}`)
     })
   }
@@ -561,6 +625,10 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     lagMode = false
     lagStateLogged = false
     isStopping = false
+    connectionStartedAt = null
+    lastUptimeMs = null
+    nextReconnectDelayMs = null
+    nextReconnectAt = null
     checkpointManager.resetState()
     humanizer.reset()
     refillManager.reset()
@@ -577,6 +645,8 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     bot.loadPlugin(pathfinder)
     registerBotEvents()
   }
+
+  if (!statusInterval) statusInterval = setInterval(emitStatus, 1000)
 
   return {
     connect,
