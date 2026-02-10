@@ -1,13 +1,17 @@
 'use strict'
 
-function createRefillManager ({ getBot, cfg, goals, itemCountByName, hasRequiredInventoryForRemaining, requireInventoryForLayer, isBusyPlacing, isStableForRefill, sleepTicks, log }) {
+function createRefillManager ({ getBot, cfg, goals, itemCountByName, hasRequiredInventoryForRemaining, requireInventoryForLayer, isBusyPlacing, isStableForRefill, sleepTicks, log, onRefillStatus }) {
   let lastRefillAttemptAtMs = 0
   let lastLowInventoryWarnAtMs = 0
+  let lastRefillSuccessAtMs = null
+  let lastRefillContainer = null
   const ignoredContainerUntilMs = new Map()
 
   function reset () {
     lastRefillAttemptAtMs = 0
     lastLowInventoryWarnAtMs = 0
+    lastRefillSuccessAtMs = null
+    lastRefillContainer = null
     ignoredContainerUntilMs.clear()
   }
 
@@ -53,6 +57,25 @@ function refillTargetsByItem () {
       cactus: stacks.cactus * getItemStackSize('cactus'),
       string: stacks.string * getItemStackSize('string'),
       cobblestone: stacks.cobblestone * getItemStackSize('cobblestone')
+    }
+  }
+
+  function getRefillStatus () {
+    const thresholds = cfg && cfg.refill ? cfg.refill.thresholds : null
+    const items = {}
+    if (thresholds) {
+      for (const name of Object.keys(thresholds)) {
+        items[name] = itemCountByName(name)
+      }
+    }
+    return {
+      enabled: Boolean(cfg.refill && cfg.refill.enabled),
+      needsRefill: needsRefillByThreshold(),
+      thresholds,
+      items,
+      lastRefillAttemptAtMs: lastRefillAttemptAtMs || null,
+      lastRefillSuccessAtMs,
+      lastRefillContainer
     }
   }
 
@@ -157,6 +180,14 @@ function refillTargetsByItem () {
 
     const containerKey = containerBlock.position.toString()
     try {
+      lastRefillContainer = {
+        name: containerBlock.name,
+        position: {
+          x: containerBlock.position.x,
+          y: containerBlock.position.y,
+          z: containerBlock.position.z
+        }
+      }
       await gotoContainerForInteraction(containerBlock)
       const container = await bot.openContainer(containerBlock)
       try {
@@ -170,6 +201,7 @@ function refillTargetsByItem () {
 
         const totalTaken = taken.sand + taken.cactus + taken.string + taken.cobblestone
         if (totalTaken > 0) {
+          lastRefillSuccessAtMs = Date.now()
           log(`[INFO] Refill complete from ${containerBlock.name}: +${taken.sand} sand, +${taken.cactus} cactus, +${taken.string} string, +${taken.cobblestone} cobblestone.`)
           return true
         }
@@ -184,6 +216,8 @@ function refillTargetsByItem () {
       log(`[WARN] Refill attempt failed: ${err.message}`)
       await sleepTicks(1)
       return false
+    } finally {
+      if (typeof onRefillStatus === 'function') onRefillStatus(getRefillStatus())
     }
   }
 
@@ -200,6 +234,7 @@ function refillTargetsByItem () {
     tryOpportunisticRefill,
     ensureInventoryForRemaining,
     needsRefillByThreshold,
+    getRefillStatus,
     reset
   }
 }
