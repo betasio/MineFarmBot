@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MineFarmBot Control Panel</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <header class="topbar card">
+      <div>
+        <h1>MineFarmBot Control Panel</h1>
+        <p id="server-meta">Server: -- | Bot: --</p>
+      </div>
+      <div class="health-grid">
+        <div><span class="label">Connection</span><strong id="connection-badge" class="badge">Offline</strong></div>
+        <div><span class="label">Ping</span><strong id="ping-value">--</strong></div>
+        <div><span class="label">Lag mode</span><strong id="lag-value">--</strong></div>
+        <div><span class="label">Reconnect</span><strong id="reconnect-value">0</strong></div>
+        <div><span class="label">Countdown</span><strong id="reconnect-countdown">--</strong></div>
+        <div><span class="label">Uptime</span><strong id="uptime-value">--</strong></div>
+      </div>
+    </header>
+
+    <main class="dashboard-grid">
+      <section class="card">
+        <h2>Build Progress</h2>
+        <div class="metric"><span>Layer</span><strong id="layer-value">0 / 0</strong></div>
+        <div class="metric"><span>Cell</span><strong id="cell-value">0 / 0</strong></div>
+        <div class="metric"><span>State</span><strong id="build-state">idle</strong></div>
+        <div class="progress"><div id="progress-fill"></div></div>
+        <div class="metric"><span>ETA</span><strong id="eta-value">--</strong></div>
+        <div class="metric"><span>Placements/min</span><strong id="ppm-value">0.0</strong></div>
+        <div class="metric"><span>Checkpoint</span><strong id="checkpoint-value">Layer 0, Cell 0</strong></div>
+        <div class="metric"><span>Coordinates</span><strong id="coord-value">--</strong></div>
+        <div class="metric"><span>Dimension</span><strong id="dimension-value">--</strong></div>
+      </section>
+
+      <section class="card">
+        <div class="log-header">
+          <h2>Live Activity Feed</h2>
+          <div>
+            <button id="pause-scroll-btn">Pause Scroll</button>
+            <button id="clear-log-btn">Clear</button>
+            <button id="export-log-btn">Export</button>
+          </div>
+        </div>
+        <div id="log-feed" class="log-feed"></div>
+      </section>
+
+      <section class="card">
+        <h2>Materials & Refill</h2>
+        <div id="materials-panel"></div>
+        <hr />
+        <div class="metric"><span>Last refill</span><strong id="refill-time">--</strong></div>
+        <div class="metric"><span>Container</span><strong id="refill-container">--</strong></div>
+        <div class="metric"><span>Refill status</span><strong id="refill-status">idle</strong></div>
+      </section>
+    </main>
+
+    <footer class="controls card">
+      <button class="btn start" data-action="start">🟢 START</button>
+      <button class="btn pause" data-action="pause">🟡 PAUSE</button>
+      <button class="btn resume" data-action="resume">🔵 RESUME</button>
+      <button class="btn stop" data-action="stop">🔴 SAFE STOP</button>
+      <button id="copy-error-btn">Copy Last Error</button>
+    </footer>
+
+    <audio id="error-sound">
+      <source src="data:audio/wav;base64,UklGRlQAAABXQVZFZm10IBAAAAABAAEARKwAABCxAgAEABAAZGF0YTAAAAAAAP8AAP8AAP8AAP8AAP8AAP8AAP8AAP8AAP8AAP8AAP8AAP8=" type="audio/wav">
+    </audio>
+
+    <script src="/assets/app.js"></script>
+  </body>
+</html>

@@ -66,8 +66,10 @@ The bot now exposes a lightweight GUI transport (HTTP + SSE) for a browser-based
 
 **GUI transport endpoints**
 
+- `GET /` — Operator Control Panel dashboard (single-page UI).
 - `GET /status` — JSON snapshot of current state.
 - `GET /events` — Server-Sent Events (SSE) stream (`status`, `log`, `warning`, `error`).
+- `POST /control` — operator command bridge (`start`, `pause`, `resume`, `stop`).
 
 ### Operator controls
 
