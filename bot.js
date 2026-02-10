@@ -254,12 +254,12 @@ function createBotEngine (config = validateConfig(loadConfig())) {
   async function safeStop (reason) {
     if (isStopping) return
     isStopping = true
-    reportError(`[STOP] ${reason}`)
+    reportError(`Stop: ${reason}`)
     try {
       await moveToSafePlatform()
       await bot.look(yawFromDegrees(cfg.facingYawDegrees), 0, true)
     } catch (err) {
-      warn(`[WARN] Failed to move to safe platform during stop: ${err.message}`)
+      warn(`Failed to move to safe platform during stop: ${err.message}`)
     }
     if (bot.player) bot.quit(`[MineFarmBot] ${reason}`)
   }
@@ -449,10 +449,10 @@ function createBotEngine (config = validateConfig(loadConfig())) {
         const avg = lagSamples.reduce((a, b) => a + b, 0) / lagSamples.length
         lagMode = avg > 70
         if (lagMode && !lagStateLogged) {
-          warn('[WARN] Server lag detected. Slowing placement rate.')
+          warn('Server lag detected. Slowing placement rate.')
           lagStateLogged = true
         } else if (!lagMode && lagStateLogged) {
-          log('[INFO] Lag recovered. Returning to normal placement rate.')
+          log('Lag recovered. Returning to normal placement rate.')
           lagStateLogged = false
         }
       }
@@ -471,12 +471,12 @@ function createBotEngine (config = validateConfig(loadConfig())) {
   }
 
   async function enterSurvivalFromLobby () {
-    log('[INFO] Waiting for lobby to finish loading...')
+    log('Waiting for lobby to finish loading...')
     await bot.waitForTicks(100)
 
     const initialPos = bot.entity.position.clone()
     for (let attempt = 1; attempt <= 3; attempt++) {
-      log(`[INFO] Sending /survival (attempt ${attempt}/3)...`)
+      log(`Sending /survival (attempt ${attempt}/3)...`)
       bot.chat('/survival')
       await bot.waitForTicks(20)
 
@@ -487,17 +487,17 @@ function createBotEngine (config = validateConfig(loadConfig())) {
       }
 
       if (bot.entity.position.distanceTo(initialPos) >= 5) {
-        log('[INFO] Survival transfer stage complete.')
+        log('Survival transfer stage complete.')
         return
       }
 
       if (attempt < 3) {
-        warn('[WARN] Teleport not detected yet. Retrying /survival...')
+        warn('Teleport not detected yet. Retrying /survival...')
         await sleepMs(1200)
       }
     }
 
-    warn('[WARN] Teleport movement not detected after retries. Continuing with fallback delay.')
+    warn('Teleport movement not detected after retries. Continuing with fallback delay.')
     await bot.waitForTicks(100)
   }
 
@@ -517,7 +517,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
 
   async function startBuild () {
     if (!bot || !bot.player) {
-      warn('[WARN] Bot is not connected yet.')
+      warn('Bot is not connected yet.')
       return
     }
 
@@ -550,7 +550,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     const delay = Math.min(Math.floor(baseDelay), MAX_RECONNECT_DELAY)
     nextReconnectDelayMs = delay
     nextReconnectAt = Date.now() + delay
-    log(`[RECONNECT] Lost connection (${reason}). Attempt ${reconnectAttempts}. Reconnecting in ${Math.floor(delay / 1000)}s`)
+    log(`Lost connection (${reason}). Attempt ${reconnectAttempts}. Reconnecting in ${Math.floor(delay / 1000)}s`)
     emitStatus()
     setTimeout(() => {
       reconnectScheduled = false
@@ -574,8 +574,8 @@ function createBotEngine (config = validateConfig(loadConfig())) {
       reconnectScheduled = false
       emitStatus()
 
-      log('[INFO] Spawned and connected. Waiting for start command...')
-      log(`[INFO] Config: layers=${cfg.layers}, buildDelayTicks=${cfg.buildDelayTicks}, removeScaffold=${cfg.removeScaffold}`)
+      log('Spawned and connected. Waiting for start command...')
+      log(`Config: layers=${cfg.layers}, buildDelayTicks=${cfg.buildDelayTicks}, removeScaffold=${cfg.removeScaffold}`)
 
       try {
         setupMovement()
@@ -584,15 +584,15 @@ function createBotEngine (config = validateConfig(loadConfig())) {
         await enterSurvivalFromLobby()
 
         if (!hasSolidFooting()) {
-          warn('[WARN] Bot spawned without solid non-sand footing. Fix position, then run start.')
+          warn('Bot spawned without solid non-sand footing. Fix position, then run start.')
         }
       } catch (err) {
-        reportError(`[ERROR] Startup warning: ${err.message}`)
+        reportError(`Startup warning: ${err.message}`)
       }
     })
 
     bot.on('end', () => {
-      log('[INFO] Disconnected from server.')
+      log('Disconnected from server.')
       if (connectionStartedAt) lastUptimeMs = Date.now() - connectionStartedAt
       connectionStartedAt = null
       emitStatus()
@@ -600,7 +600,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     })
 
     bot.on('kicked', reason => {
-      reportError(`[KICKED] ${reason}`)
+      reportError(`Kicked: ${reason}`)
       if (connectionStartedAt) lastUptimeMs = Date.now() - connectionStartedAt
       connectionStartedAt = null
       emitStatus()
@@ -608,7 +608,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     })
 
     bot.on('error', err => {
-      reportError(`[ERROR] ${err.message}`)
+      reportError(err.message)
       if (connectionStartedAt) lastUptimeMs = Date.now() - connectionStartedAt
       connectionStartedAt = null
       emitStatus()
