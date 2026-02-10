@@ -147,7 +147,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
       reconnectDelayMs: nextReconnectDelayMs,
       reconnectAt: nextReconnectAt,
       position,
-      build: buildController.getStatus(),
+      build: buildStatus,
       inventory: inventory.getMaterialCounts(),
       refill: refillManager.getRefillStatus()
     }
@@ -513,8 +513,20 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     onLog: entry => handleLogEntry(entry)
   })
 
-  buildController.on('progress', status => emit('status', status))
-  buildController.on('state', status => emit('status', status))
+  let buildStatus = buildController.getStatus()
+
+  function updateBuildStatus (status) {
+    buildStatus = status || buildController.getStatus()
+  }
+
+  buildController.on('progress', status => {
+    updateBuildStatus(status)
+    emitStatus()
+  })
+  buildController.on('state', status => {
+    updateBuildStatus(status)
+    emitStatus()
+  })
 
   async function startBuild () {
     if (!bot || !bot.player) {
