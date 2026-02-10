@@ -7,13 +7,16 @@
     <link rel="stylesheet" href="/assets/styles.css" />
   </head>
   <body>
+    <div id="toast" class="toast" aria-live="polite"></div>
+
     <header class="topbar card">
       <div>
         <h1>MineFarmBot Control Panel</h1>
         <p id="server-meta">Server: -- | Bot: --</p>
       </div>
+
       <div class="health-grid">
-        <div><span class="label">Connection</span><strong id="connection-badge" class="badge">Offline</strong></div>
+        <div><span class="label">Connection</span><strong id="connection-badge" class="badge offline">OFFLINE</strong></div>
         <div><span class="label">Ping</span><strong id="ping-value">--</strong></div>
         <div><span class="label">Lag mode</span><strong id="lag-value">--</strong></div>
         <div><span class="label">Reconnect</span><strong id="reconnect-value">0</strong></div>
@@ -25,21 +28,27 @@
     <main class="dashboard-grid">
       <section class="card">
         <h2>Build Progress</h2>
+
         <div class="metric"><span>Layer</span><strong id="layer-value">0 / 0</strong></div>
         <div class="metric"><span>Cell</span><strong id="cell-value">0 / 0</strong></div>
-        <div class="metric"><span>State</span><strong id="build-state">idle</strong></div>
-        <div class="progress"><div id="progress-fill"></div></div>
+        <div class="metric"><span>State</span><strong id="build-state">IDLE</strong></div>
+
+        <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <div id="progress-fill"></div>
+        </div>
+
         <div class="metric"><span>ETA</span><strong id="eta-value">--</strong></div>
         <div class="metric"><span>Placements/min</span><strong id="ppm-value">0.0</strong></div>
         <div class="metric"><span>Checkpoint</span><strong id="checkpoint-value">Layer 0, Cell 0</strong></div>
         <div class="metric"><span>Coordinates</span><strong id="coord-value">--</strong></div>
         <div class="metric"><span>Dimension</span><strong id="dimension-value">--</strong></div>
+        <div class="metric"><span>Last action</span><strong id="last-action-age">--</strong></div>
       </section>
 
       <section class="card">
         <div class="log-header">
           <h2>Live Activity Feed</h2>
-          <div>
+          <div class="inline-actions">
             <button id="pause-scroll-btn">Pause Scroll</button>
             <button id="clear-log-btn">Clear</button>
             <button id="export-log-btn">Export</button>
@@ -54,7 +63,7 @@
         <hr />
         <div class="metric"><span>Last refill</span><strong id="refill-time">--</strong></div>
         <div class="metric"><span>Container</span><strong id="refill-container">--</strong></div>
-        <div class="metric"><span>Refill status</span><strong id="refill-status">idle</strong></div>
+        <div class="metric"><span>Refill status</span><strong id="refill-status">IDLE</strong></div>
       </section>
     </main>
 
@@ -66,8 +75,8 @@
       <button id="copy-error-btn">Copy Last Error</button>
     </footer>
 
-    <audio id="error-sound">
-      <source src="data:audio/wav;base64,UklGRlQAAABXQVZFZm10IBAAAAABAAEARKwAABCxAgAEABAAZGF0YTAAAAAAAP8AAP8AAP8AAP8AAP8AAP8AAP8AAP8AAP8AAP8AAP8AAP8=" type="audio/wav">
+    <audio id="error-sound" preload="none">
+      <source src="data:audio/wav;base64,UklGRlQAAABXQVZFZm10IBAAAAABAAEARKwAABCxAgAEABAAZGF0YTAAAAAAAP8AAP8AAP8AAP8AAP8AAP8AAP8AAP8AAP8AAP8AAP8AAP8=" type="audio/wav" />
     </audio>
 
     <script src="/assets/app.js"></script>

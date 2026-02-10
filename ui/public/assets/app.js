@@ -1,6 +1,10 @@
 'use strict'
 
+const MAX_LOGS = 1000
+const lowThresholdDefaults = { sand: 64, cactus: 64, string: 64, cobblestone: 128 }
+
 const els = {
+  toast: document.getElementById('toast'),
   serverMeta: document.getElementById('server-meta'),
   connectionBadge: document.getElementById('connection-badge'),
   pingValue: document.getElementById('ping-value'),
@@ -17,20 +21,30 @@ const els = {
   checkpointValue: document.getElementById('checkpoint-value'),
   coordValue: document.getElementById('coord-value'),
   dimensionValue: document.getElementById('dimension-value'),
+  lastActionAge: document.getElementById('last-action-age'),
   logFeed: document.getElementById('log-feed'),
   materialsPanel: document.getElementById('materials-panel'),
   refillTime: document.getElementById('refill-time'),
   refillContainer: document.getElementById('refill-container'),
   refillStatus: document.getElementById('refill-status'),
-  errorSound: document.getElementById('error-sound')
+  errorSound: document.getElementById('error-sound'),
+  pauseScrollBtn: document.getElementById('pause-scroll-btn'),
+  clearLogBtn: document.getElementById('clear-log-btn'),
+  exportLogBtn: document.getElementById('export-log-btn'),
+  copyErrorBtn: document.getElementById('copy-error-btn')
 }
 
-let autoScroll = true
-let statusSnapshot = null
-let logEntries = []
-let lastError = ''
-
-const lowThresholdDefaults = { sand: 64, cactus: 64, string: 64, cobblestone: 128 }
+const state = {
+  autoScroll: true,
+  statusSnapshot: null,
+  logEntries: [],
+  lastError: '',
+  lastActionAt: null,
+  updateTicker: null,
+  eventStream: null,
+  controlsInFlight: false,
+  toastTimer: null
+}
 
 function formatDuration (ms) {
   if (ms == null || Number.isNaN(ms)) return '--'
@@ -48,173 +62,297 @@ function formatTime (ts) {
   return new Date(ts).toLocaleTimeString()
 }
 
+function levelOf (entry) {
+  const level = String(entry.level || 'info').toLowerCase()
+  if (level === 'error' || level === 'warn' || level === 'info') return level
+  return 'info'
+}
+
+function showToast (message) {
+  if (!els.toast) return
+  if (state.toastTimer) {
+    clearTimeout(state.toastTimer)
+    state.toastTimer = null
+  }
+
+  els.toast.textContent = message
+  els.toast.classList.add('show')
+  state.toastTimer = setTimeout(() => {
+    els.toast.classList.remove('show')
+    state.toastTimer = null
+  }, 2500)
+}
+
+function setControlButtonsDisabled (disabled) {
+  state.controlsInFlight = disabled
+  for (const btn of document.querySelectorAll('[data-action]')) {
+    btn.disabled = disabled
+  }
+}
+
+function trimLogFeedDom () {
+  while (els.logFeed.childElementCount > MAX_LOGS) {
+    els.logFeed.removeChild(els.logFeed.firstElementChild)
+  }
+}
+
 function appendLog (entry) {
-  logEntries.push(entry)
-  if (logEntries.length > 1000) logEntries.shift()
+  const payload = {
+    level: levelOf(entry),
+    message: String(entry.message || ''),
+    timestamp: entry.timestamp || Date.now()
+  }
+
+  state.logEntries.push(payload)
+  if (state.logEntries.length > MAX_LOGS) {
+    state.logEntries.shift()
+  }
 
   const line = document.createElement('p')
-  line.className = `log-line ${entry.level || 'info'}`
-  line.textContent = `[${new Date(entry.timestamp || Date.now()).toLocaleTimeString()}] [${(entry.level || 'info').toUpperCase()}] ${entry.message}`
+  line.className = `log-line ${payload.level}`
+  line.textContent = `[${new Date(payload.timestamp).toLocaleTimeString()}] [${payload.level.toUpperCase()}] ${payload.message}`
   els.logFeed.appendChild(line)
+  trimLogFeedDom()
 
-  if (autoScroll) {
+  if (state.autoScroll) {
     els.logFeed.scrollTop = els.logFeed.scrollHeight
   }
 }
 
 function renderMaterials (inventory = {}, refill = {}) {
-  const thresholds = (refill && refill.thresholds) || lowThresholdDefaults
+  const thresholds = refill.thresholds || lowThresholdDefaults
   const keys = ['sand', 'cactus', 'string', 'cobblestone']
-  els.materialsPanel.innerHTML = ''
+  const fragment = document.createDocumentFragment()
 
   for (const key of keys) {
-    const value = inventory[key] || 0
-    const threshold = thresholds[key] || lowThresholdDefaults[key] || 1
+    const value = Number(inventory[key] || 0)
+    const threshold = Number(thresholds[key] || lowThresholdDefaults[key] || 1)
     const fillPct = Math.min((value / Math.max(threshold * 2, 1)) * 100, 100)
+
     const row = document.createElement('div')
     row.className = 'material-row'
-    row.innerHTML = `
-      <div class="material-head"><span>${key[0].toUpperCase() + key.slice(1)}</span><strong>${value} ${value <= threshold ? '<span class="low">LOW</span>' : ''}</strong></div>
-      <div class="material-bar"><div class="material-fill" style="width:${fillPct}%"></div></div>
-    `
-    els.materialsPanel.appendChild(row)
+
+    const isLow = value <= threshold
+    row.innerHTML = [
+      '<div class="material-head">',
+      `<span>${key[0].toUpperCase() + key.slice(1)}</span>`,
+      `<strong>${value}${isLow ? ' <span class="low">LOW</span>' : ''}</strong>`,
+      '</div>',
+      `<div class="material-bar"><div class="material-fill" style="width:${fillPct}%"></div></div>`
+    ].join('')
+
+    fragment.appendChild(row)
+  }
+
+  els.materialsPanel.replaceChildren(fragment)
+}
+
+function renderDynamicTimeFields () {
+  const status = state.statusSnapshot
+  if (!status) return
+
+  if (status.reconnectAt) {
+    els.reconnectCountdown.textContent = formatDuration(Math.max(status.reconnectAt - Date.now(), 0))
+  } else {
+    els.reconnectCountdown.textContent = '--'
+  }
+
+  if (state.lastActionAt) {
+    els.lastActionAge.textContent = `${formatDuration(Date.now() - state.lastActionAt)} ago`
+  } else {
+    els.lastActionAge.textContent = '--'
   }
 }
 
 function updateStatus (status) {
-  statusSnapshot = status
-  const state = status.connectionState || 'offline'
-  els.connectionBadge.textContent = state.toUpperCase()
-  els.connectionBadge.className = `badge ${state}`
+  state.statusSnapshot = status
+
+  const connectionState = status.connectionState || 'offline'
+  const connectionCss = ['online', 'reconnecting', 'offline'].includes(connectionState) ? connectionState : 'offline'
+  els.connectionBadge.textContent = connectionState.toUpperCase()
+  els.connectionBadge.className = `badge ${connectionCss}`
+
   els.serverMeta.textContent = `Server: ${status.host}:${status.port} | Bot: ${status.username}`
   els.pingValue.textContent = typeof status.ping === 'number' ? `${status.ping} ms` : '--'
   els.lagValue.textContent = status.lagMode ? 'ON' : 'OFF'
   els.reconnectValue.textContent = `${status.reconnectAttempts || 0}`
   els.uptimeValue.textContent = formatDuration(status.uptimeMs)
 
-  const reconnectAt = status.reconnectAt
-  if (reconnectAt) {
-    const remaining = Math.max(reconnectAt - Date.now(), 0)
-    els.reconnectCountdown.textContent = formatDuration(remaining)
-  } else {
-    els.reconnectCountdown.textContent = '--'
-  }
-
   const build = status.build || {}
   const metrics = build.metrics || {}
-  const layer = build.layer || 0
-  const layersTotal = build.layersTotal || 0
-  const cell = build.cell || 0
-  const cellsTotal = build.cellsTotal || 0
+  const layer = Number(build.layer || 0)
+  const layersTotal = Number(build.layersTotal || 0)
+  const cell = Number(build.cell || 0)
+  const cellsTotal = Number(build.cellsTotal || 0)
 
   els.layerValue.textContent = `${layer} / ${layersTotal}`
   els.cellValue.textContent = `${cell} / ${cellsTotal}`
-  els.buildState.textContent = (build.status || build.state || 'idle').toUpperCase()
+  els.buildState.textContent = String(build.status || build.state || 'idle').toUpperCase()
   els.ppmValue.textContent = Number(metrics.placementsPerMinute || 0).toFixed(1)
   els.etaValue.textContent = formatDuration(metrics.etaMs)
   els.checkpointValue.textContent = `Layer ${layer}, Cell ${cell}`
 
-  const totalDone = metrics.totalPlaced || 0
-  const estimatedTotal = metrics.estimatedTotalCells || (layersTotal * (cellsTotal || 0))
-  const progressPct = estimatedTotal > 0 ? Math.min((totalDone / estimatedTotal) * 100, 100) : 0
+  const done = Number(metrics.totalPlaced || 0)
+  const estimatedTotal = Number(metrics.estimatedTotalCells || (layersTotal * cellsTotal) || 0)
+  const progressPct = estimatedTotal > 0 ? Math.min((done / estimatedTotal) * 100, 100) : 0
   els.progressFill.style.width = `${progressPct.toFixed(1)}%`
+  const progressBar = els.progressFill.parentElement
+  if (progressBar) progressBar.setAttribute('aria-valuenow', progressPct.toFixed(0))
 
   if (status.coordinates) {
     els.coordValue.textContent = `${status.coordinates.x.toFixed(1)}, ${status.coordinates.y.toFixed(1)}, ${status.coordinates.z.toFixed(1)}`
   } else {
     els.coordValue.textContent = '--'
   }
+
   els.dimensionValue.textContent = status.dimension || '--'
 
-  renderMaterials(status.inventory, status.refill)
+  renderMaterials(status.inventory || {}, status.refill || {})
 
   const refill = status.refill || {}
-  els.refillStatus.textContent = refill.needsRefill ? 'needs refill' : 'ok'
+  els.refillStatus.textContent = (refill.needsRefill ? 'NEEDS REFILL' : 'OK')
   const container = refill.lastRefillContainer
-  els.refillContainer.textContent = container ? `${container.name} @ ${container.position.x},${container.position.y},${container.position.z}` : '--'
+  els.refillContainer.textContent = container
+    ? `${container.name} @ ${container.position.x},${container.position.y},${container.position.z}`
+    : '--'
   els.refillTime.textContent = formatTime(refill.lastRefillSuccessAtMs)
+
+  renderDynamicTimeFields()
 }
 
 async function sendControl (action) {
-  const result = await fetch('/control', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action })
-  })
-  const payload = await result.json()
-  if (!result.ok || payload.ok === false) {
-    throw new Error(payload.error || `Action failed: ${action}`)
+  if (state.controlsInFlight) return
+  setControlButtonsDisabled(true)
+
+  try {
+    const result = await fetch('/control', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action })
+    })
+
+    const payload = await result.json().catch(() => ({}))
+    if (!result.ok || payload.ok === false) {
+      throw new Error(payload.error || `Action failed: ${action}`)
+    }
+
+    state.lastActionAt = Date.now()
+    appendLog({ level: 'info', message: `Control action accepted: ${action}`, timestamp: Date.now() })
+    showToast(`Action sent: ${action.toUpperCase()}`)
+  } finally {
+    setControlButtonsDisabled(false)
   }
-  appendLog({ level: 'info', message: `Control action accepted: ${action}`, timestamp: Date.now() })
 }
 
-function bindControls () {
-  document.querySelectorAll('[data-action]').forEach(btn => {
+function exportLogs () {
+  const blob = new Blob([JSON.stringify(state.logEntries, null, 2)], { type: 'application/json' })
+  const link = document.createElement('a')
+  link.href = URL.createObjectURL(blob)
+  link.download = `minefarmbot-log-${Date.now()}.json`
+  link.click()
+  URL.revokeObjectURL(link.href)
+}
+
+async function copyLastError () {
+  if (!state.lastError) {
+    showToast('No error to copy yet.')
+    return
+  }
+
+  if (!navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') {
+    appendLog({ level: 'warn', message: 'Clipboard API unavailable in this browser context.', timestamp: Date.now() })
+    return
+  }
+
+  await navigator.clipboard.writeText(state.lastError)
+  appendLog({ level: 'info', message: 'Copied last error to clipboard', timestamp: Date.now() })
+  showToast('Copied last error.')
+}
+
+function setupControls () {
+  for (const btn of document.querySelectorAll('[data-action]')) {
     btn.addEventListener('click', async () => {
       const action = btn.getAttribute('data-action')
       try {
         await sendControl(action)
       } catch (err) {
-        lastError = err.message
+        state.lastError = err.message
         appendLog({ level: 'error', message: err.message, timestamp: Date.now() })
+        showToast(err.message)
       }
     })
+  }
+
+  els.pauseScrollBtn.addEventListener('click', () => {
+    state.autoScroll = !state.autoScroll
+    els.pauseScrollBtn.textContent = state.autoScroll ? 'Pause Scroll' : 'Resume Scroll'
   })
 
-  document.getElementById('pause-scroll-btn').addEventListener('click', (e) => {
-    autoScroll = !autoScroll
-    e.target.textContent = autoScroll ? 'Pause Scroll' : 'Resume Scroll'
+  els.clearLogBtn.addEventListener('click', () => {
+    state.logEntries = []
+    els.logFeed.replaceChildren()
+    showToast('Log cleared.')
   })
 
-  document.getElementById('clear-log-btn').addEventListener('click', () => {
-    logEntries = []
-    els.logFeed.innerHTML = ''
-  })
+  els.exportLogBtn.addEventListener('click', exportLogs)
+  els.copyErrorBtn.addEventListener('click', () => copyLastError().catch(() => {}))
+}
 
-  document.getElementById('export-log-btn').addEventListener('click', () => {
-    const blob = new Blob([JSON.stringify(logEntries, null, 2)], { type: 'application/json' })
-    const link = document.createElement('a')
-    link.href = URL.createObjectURL(blob)
-    link.download = `minefarmbot-log-${Date.now()}.json`
-    link.click()
-    URL.revokeObjectURL(link.href)
-  })
+function onErrorEvent (payload) {
+  state.lastError = payload.message || 'Unknown error'
+  appendLog(payload)
+  els.errorSound.play().catch(() => {})
 
-  document.getElementById('copy-error-btn').addEventListener('click', async () => {
-    if (!lastError) return
-    await navigator.clipboard.writeText(lastError)
-    appendLog({ level: 'info', message: 'Copied last error to clipboard', timestamp: Date.now() })
-  })
+  if (window.Notification && Notification.permission === 'granted') {
+    new Notification('MineFarmBot Error', { body: state.lastError })
+  }
+}
+
+function teardownEventStream () {
+  if (state.eventStream) {
+    state.eventStream.close()
+    state.eventStream = null
+  }
 }
 
 function setupEventStream () {
+  teardownEventStream()
+
   const stream = new EventSource('/events')
-  stream.addEventListener('status', (event) => updateStatus(JSON.parse(event.data)))
-  stream.addEventListener('log', (event) => appendLog(JSON.parse(event.data)))
-  stream.addEventListener('warning', (event) => appendLog(JSON.parse(event.data)))
-  stream.addEventListener('error', (event) => {
-    const payload = JSON.parse(event.data)
-    lastError = payload.message
-    appendLog(payload)
-    els.errorSound.play().catch(() => {})
-    if (window.Notification && Notification.permission === 'granted') {
-      new Notification('MineFarmBot Error', { body: payload.message })
-    }
-  })
-  stream.onerror = () => appendLog({ level: 'warn', message: 'Event stream interrupted. Waiting to reconnect...', timestamp: Date.now() })
+  state.eventStream = stream
+
+  stream.addEventListener('status', event => updateStatus(JSON.parse(event.data)))
+  stream.addEventListener('log', event => appendLog(JSON.parse(event.data)))
+  stream.addEventListener('warning', event => appendLog(JSON.parse(event.data)))
+  stream.addEventListener('error', event => onErrorEvent(JSON.parse(event.data)))
+
+  stream.onerror = () => {
+    appendLog({ level: 'warn', message: 'Event stream interrupted. Browser will retry automatically.', timestamp: Date.now() })
+  }
 }
 
 async function init () {
-  bindControls()
+  setupControls()
+
   if (window.Notification && Notification.permission === 'default') {
     Notification.requestPermission().catch(() => {})
   }
-  const status = await fetch('/status').then(r => r.json())
+
+  const status = await fetch('/status', { cache: 'no-store' }).then(r => r.json())
   updateStatus(status)
   setupEventStream()
-  setInterval(() => {
-    if (statusSnapshot && statusSnapshot.reconnectAt) updateStatus(statusSnapshot)
-  }, 1000)
+
+  state.updateTicker = setInterval(renderDynamicTimeFields, 1000)
+
+  window.addEventListener('beforeunload', () => {
+    if (state.updateTicker) clearInterval(state.updateTicker)
+    if (state.toastTimer) clearTimeout(state.toastTimer)
+    teardownEventStream()
+  })
 }
 
-init().catch(err => appendLog({ level: 'error', message: err.message, timestamp: Date.now() }))
+init().catch(err => {
+  state.lastError = err.message
+  appendLog({ level: 'error', message: err.message, timestamp: Date.now() })
+  showToast(err.message)
+})

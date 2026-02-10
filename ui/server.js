@@ -4,13 +4,28 @@ const fs = require('fs')
 const http = require('http')
 const path = require('path')
 
+const MAX_CONTROL_PAYLOAD_BYTES = 4096
+const SSE_HEARTBEAT_MS = 15000
+
 function formatSse (event, data) {
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
 }
 
 function jsonResponse (res, statusCode, payload) {
-  res.writeHead(statusCode, { 'Content-Type': 'application/json' })
+  res.writeHead(statusCode, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-store'
+  })
   res.end(JSON.stringify(payload))
+}
+
+function guessContentType (filePath) {
+  const ext = path.extname(filePath)
+  return {
+    '.html': 'text/html; charset=utf-8',
+    '.css': 'text/css; charset=utf-8',
+    '.js': 'application/javascript; charset=utf-8'
+  }[ext] || 'application/octet-stream'
 }
 
 function startUiServer ({ engine, cfg }) {
@@ -21,6 +36,7 @@ function startUiServer ({ engine, cfg }) {
 
   const host = guiConfig.host || '0.0.0.0'
   const port = guiConfig.port || 8787
+  const publicDir = path.join(__dirname, 'public')
   const clients = new Set()
   const publicDir = path.join(__dirname, 'public')
 
@@ -28,30 +44,45 @@ function startUiServer ({ engine, cfg }) {
     const reqUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`)
 
     if (req.method === 'GET' && reqUrl.pathname === '/status') {
-      const payload = engine.getStatus()
-      jsonResponse(res, 200, payload)
+      jsonResponse(res, 200, engine.getStatus())
       return
     }
 
     if (req.method === 'GET' && reqUrl.pathname === '/events') {
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        Connection: 'keep-alive'
+        'Cache-Control': 'no-cache, no-transform',
+        Connection: 'keep-alive',
+        'X-Accel-Buffering': 'no'
       })
+
       res.write(formatSse('status', engine.getStatus()))
       clients.add(res)
-      req.on('close', () => {
+
+      const cleanup = () => {
         clients.delete(res)
-      })
+      }
+
+      req.on('close', cleanup)
+      req.on('error', cleanup)
+      res.on('error', cleanup)
       return
     }
 
     if (req.method === 'POST' && reqUrl.pathname === '/control') {
       let body = ''
+      let size = 0
+
       req.on('data', chunk => {
+        size += chunk.length
+        if (size > MAX_CONTROL_PAYLOAD_BYTES) {
+          jsonResponse(res, 413, { ok: false, error: 'Payload too large' })
+          req.destroy()
+          return
+        }
         body += chunk
       })
+
       req.on('end', async () => {
         let payload
         try {
@@ -61,7 +92,7 @@ function startUiServer ({ engine, cfg }) {
           return
         }
 
-        const action = (payload.action || '').toLowerCase()
+        const action = String(payload.action || '').toLowerCase()
         if (!action) {
           jsonResponse(res, 400, { ok: false, error: 'Missing action' })
           return
@@ -70,7 +101,7 @@ function startUiServer ({ engine, cfg }) {
         try {
           if (action === 'start') {
             await engine.startBuild()
-            jsonResponse(res, 200, { ok: true, action })
+            jsonResponse(res, 200, { ok: true, action, accepted: true })
             return
           }
 
@@ -97,30 +128,35 @@ function startUiServer ({ engine, cfg }) {
           jsonResponse(res, 500, { ok: false, error: err.message })
         }
       })
+
+      req.on('error', () => {
+        if (!res.headersSent) jsonResponse(res, 400, { ok: false, error: 'Failed to read request body' })
+      })
+
       return
     }
 
     if (req.method === 'GET' && (reqUrl.pathname === '/' || reqUrl.pathname.startsWith('/assets/'))) {
       const relativePath = reqUrl.pathname === '/' ? '/index.html' : reqUrl.pathname
-      const fullPath = path.join(publicDir, relativePath.replace(/^\//, ''))
+      const fullPath = path.resolve(publicDir, relativePath.replace(/^\//, ''))
+
       if (!fullPath.startsWith(publicDir)) {
         jsonResponse(res, 403, { error: 'Forbidden' })
         return
       }
-      if (!fs.existsSync(fullPath)) {
-        jsonResponse(res, 404, { error: 'Not Found' })
-        return
-      }
 
-      const ext = path.extname(fullPath)
-      const contentType = {
-        '.html': 'text/html; charset=utf-8',
-        '.css': 'text/css; charset=utf-8',
-        '.js': 'application/javascript; charset=utf-8'
-      }[ext] || 'application/octet-stream'
+      fs.stat(fullPath, (err, stat) => {
+        if (err || !stat.isFile()) {
+          jsonResponse(res, 404, { error: 'Not Found' })
+          return
+        }
 
-      res.writeHead(200, { 'Content-Type': contentType })
-      fs.createReadStream(fullPath).pipe(res)
+        res.writeHead(200, {
+          'Content-Type': guessContentType(fullPath),
+          'Cache-Control': reqUrl.pathname.startsWith('/assets/') ? 'public, max-age=300' : 'no-store'
+        })
+        fs.createReadStream(fullPath).pipe(res)
+      })
       return
     }
 
@@ -130,20 +166,34 @@ function startUiServer ({ engine, cfg }) {
   const sendToClients = (event, payload) => {
     if (clients.size === 0) return
     const message = formatSse(event, payload)
+
     for (const client of clients) {
-      client.write(message)
+      try {
+        client.write(message)
+      } catch {
+        clients.delete(client)
+      }
     }
   }
 
+  const heartbeat = setInterval(() => {
+    for (const client of clients) {
+      try {
+        client.write(': ping\n\n')
+      } catch {
+        clients.delete(client)
+      }
+    }
+  }, SSE_HEARTBEAT_MS)
+
   const unsubStatus = engine.onStatus(status => sendToClients('status', status))
-  const forwardLog = (entry) => sendToClients('log', entry)
-  const unsubLog = engine.onLog(forwardLog)
+  const unsubLog = engine.onLog(entry => sendToClients('log', entry))
   const unsubWarn = engine.onWarning(entry => {
-    forwardLog(entry)
+    sendToClients('log', entry)
     sendToClients('warning', entry)
   })
   const unsubError = engine.onError(entry => {
-    forwardLog(entry)
+    sendToClients('log', entry)
     sendToClients('error', entry)
   })
 
@@ -156,14 +206,19 @@ function startUiServer ({ engine, cfg }) {
   return {
     server,
     close: () => {
+      clearInterval(heartbeat)
       unsubStatus()
       unsubLog()
       unsubWarn()
       unsubError()
+
       for (const client of clients) {
-        client.end()
+        try {
+          client.end()
+        } catch {}
       }
       clients.clear()
+
       server.close()
     }
   }
