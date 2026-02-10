@@ -147,7 +147,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
       reconnectAt: nextReconnectAt,
       position,
       build: buildController.getStatus(),
-      inventory: inventory.getInventorySnapshot(),
+      inventory: inventory.getMaterialCounts(),
       refill: refillManager.getRefillStatus()
     }
   }
