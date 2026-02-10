@@ -16,6 +16,11 @@ const DEFAULT_CONFIG = {
   safePlatform: { x: 0, y: 64, z: 0 },
   origin: { x: 0, y: 64, z: 0 },
   facingYawDegrees: 0,
+  gui: {
+    enabled: true,
+    host: '0.0.0.0',
+    port: 8787
+  },
   refill: {
     enabled: true,
     radius: 7,
@@ -46,6 +51,22 @@ function validateConfig (config) {
     buildDelayTicks: clampInteger(config.buildDelayTicks, 1, 40, DEFAULT_CONFIG.buildDelayTicks),
     removeScaffold: Boolean(config.removeScaffold),
     facingYawDegrees: Number.isFinite(Number(config.facingYawDegrees)) ? Number(config.facingYawDegrees) : DEFAULT_CONFIG.facingYawDegrees,
+    gui: {
+      ...DEFAULT_CONFIG.gui,
+      ...(config.gui || {}),
+      enabled: config.gui && Object.prototype.hasOwnProperty.call(config.gui, 'enabled')
+        ? Boolean(config.gui.enabled)
+        : DEFAULT_CONFIG.gui.enabled,
+      host: (config.gui && typeof config.gui.host === 'string' && config.gui.host.trim().length > 0)
+        ? config.gui.host
+        : DEFAULT_CONFIG.gui.host,
+      port: clampInteger(
+        config.gui && config.gui.port,
+        1024,
+        65535,
+        DEFAULT_CONFIG.gui.port
+      )
+    },
     refill: {
       ...refill,
       enabled: Boolean(refill.enabled),
@@ -82,7 +103,8 @@ function loadConfig () {
       ...DEFAULT_CONFIG,
       ...parsed,
       origin: { ...DEFAULT_CONFIG.origin, ...(parsed.origin || {}) },
-      safePlatform: { ...DEFAULT_CONFIG.safePlatform, ...(parsed.safePlatform || {}) }
+      safePlatform: { ...DEFAULT_CONFIG.safePlatform, ...(parsed.safePlatform || {}) },
+      gui: { ...DEFAULT_CONFIG.gui, ...(parsed.gui || {}) }
     }
   } catch (err) {
     console.warn(`[WARN] Failed to parse config.json: ${err.message}. Falling back to defaults.`)
