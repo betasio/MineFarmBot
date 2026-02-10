@@ -145,7 +145,9 @@ function createBotEngine (config = validateConfig(loadConfig())) {
       position,
       dimension: bot && bot.game ? bot.game.dimension : null,
       uptimeMs,
-      build: buildController.getStatus()
+      build: buildController.getStatus(),
+      inventory: inventory.getInventorySnapshot(),
+      refill: refillManager.getRefillStatus()
     }
   }
 
@@ -194,7 +196,8 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     isBusyPlacing: humanizer.isBusyPlacing,
     isStableForRefill: () => hasSolidFooting(),
     sleepTicks,
-    log
+    log,
+    onRefillStatus: () => emitStatus()
   })
 
   function requireLoaded (pos) {

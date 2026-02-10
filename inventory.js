@@ -48,12 +48,30 @@ function createInventoryManager ({ getBot, cfg }) {
     }
   }
 
+  function getInventorySnapshot () {
+    const bot = getBot()
+    const thresholds = cfg && cfg.refill ? cfg.refill.thresholds : null
+    const items = {}
+
+    if (!bot) {
+      return { items, thresholds }
+    }
+
+    const tracked = thresholds ? Object.keys(thresholds) : []
+    for (const name of tracked) {
+      items[name] = itemCountByName(name)
+    }
+
+    return { items, thresholds }
+  }
+
   return {
     itemCountByName,
     equipItem,
     requireInventoryForLayer,
     hasRequiredInventoryForRemaining,
-    requireCobblestoneForLayer
+    requireCobblestoneForLayer,
+    getInventorySnapshot
   }
 }
 
