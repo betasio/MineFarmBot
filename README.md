@@ -60,6 +60,26 @@ cp config.example.json config.json
 npm start
 ```
 
+## GUI operations (primary)
+
+The GUI is the primary operator surface. Start the bot with `npm start`, then open the GUI URL shown in the startup logs (look for the `GUI:` line) in a browser on the same machine. Use the GUI for all routine operations and monitoring; the CLI remains available as a secondary/debug path only. 
+
+### Operator controls
+
+- **Start**: begins the build from the configured `origin` and initializes progress tracking.
+- **Pause**: halts work at the next safe checkpoint without logging out.
+- **Resume**: continues from the last checkpoint after a pause.
+- **Safe Stop**: requests a stop at the next safe checkpoint, saves progress, and exits cleanly.
+
+### Telemetry panels
+
+The GUI surfaces live operational telemetry so operators can monitor the bot without relying on terminal logs:
+
+- **Build Progress**: current layer, cells placed, estimated remaining work, and last placement time.
+- **Safety/Health**: stop reasons, lag mode status, and safety checks.
+- **Inventory & Refill**: item counts, low-material warnings, and refill events.
+- **Connection**: login state, reconnect attempts, and active server details.
+- **Event Log**: recent warnings/errors with timestamps.
 
 ## Non-technical quick start
 
@@ -71,7 +91,8 @@ npm start
 6. Sign in with your Microsoft account by keeping `auth` as `microsoft` in `config.json` (default).
 7. Set at least: server `host`, `port`, `username`, and farm `origin` / `safePlatform`.
 8. Start with `npm start`.
-9. After connection, use CLI commands: `start`, `pause`, `resume`, `stop`, `status`.
+9. Open the GUI URL shown in the startup logs and use the GUI controls (Start/Pause/Resume/Safe Stop).
+10. Use CLI commands only if the GUI is unavailable (debug/backup): `start`, `pause`, `resume`, `stop`, `status`.
 
 
 The bot prints clear stop messages if it detects unsafe movement, missing inventory, or disconnection.
