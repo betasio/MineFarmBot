@@ -48,21 +48,28 @@ function createInventoryManager ({ getBot, cfg }) {
     }
   }
 
-  function getInventorySnapshot () {
+  function getMaterialCounts () {
     const bot = getBot()
     const thresholds = cfg && cfg.refill ? cfg.refill.thresholds : null
     const items = {}
+    const low = {}
 
     if (!bot) {
-      return { items, thresholds }
+      return { items, thresholds, low }
     }
 
     const tracked = thresholds ? Object.keys(thresholds) : []
     for (const name of tracked) {
-      items[name] = itemCountByName(name)
+      const count = itemCountByName(name)
+      items[name] = count
+      low[name] = thresholds ? count < thresholds[name] : false
     }
 
-    return { items, thresholds }
+    return { items, thresholds, low }
+  }
+
+  function getInventorySnapshot () {
+    return getMaterialCounts()
   }
 
   return {
@@ -71,6 +78,7 @@ function createInventoryManager ({ getBot, cfg }) {
     requireInventoryForLayer,
     hasRequiredInventoryForRemaining,
     requireCobblestoneForLayer,
+    getMaterialCounts,
     getInventorySnapshot
   }
 }

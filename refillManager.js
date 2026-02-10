@@ -63,9 +63,12 @@ function refillTargetsByItem () {
   function getRefillStatus () {
     const thresholds = cfg && cfg.refill ? cfg.refill.thresholds : null
     const items = {}
+    const low = {}
     if (thresholds) {
       for (const name of Object.keys(thresholds)) {
-        items[name] = itemCountByName(name)
+        const count = itemCountByName(name)
+        items[name] = count
+        low[name] = count < thresholds[name]
       }
     }
     return {
@@ -73,6 +76,7 @@ function refillTargetsByItem () {
       needsRefill: needsRefillByThreshold(),
       thresholds,
       items,
+      low,
       lastRefillAttemptAtMs: lastRefillAttemptAtMs || null,
       lastRefillSuccessAtMs,
       lastRefillContainer
