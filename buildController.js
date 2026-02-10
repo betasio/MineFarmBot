@@ -23,6 +23,55 @@ function createBuildController ({
     cellsTotal: 0,
     status: 'idle'
   }
+  const placementWindowMs = 60 * 1000
+  let buildMetrics = {
+    startedAt: null,
+    lastPlacementAt: null,
+    totalPlaced: 0,
+    placementTimestamps: [],
+    lastLayerCellCount: 0
+  }
+
+  function resetMetrics () {
+    buildMetrics = {
+      startedAt: Date.now(),
+      lastPlacementAt: null,
+      totalPlaced: 0,
+      placementTimestamps: [],
+      lastLayerCellCount: 0
+    }
+  }
+
+  function recordPlacement () {
+    const now = Date.now()
+    buildMetrics.lastPlacementAt = now
+    buildMetrics.totalPlaced += 1
+    buildMetrics.placementTimestamps.push(now)
+    const cutoff = now - placementWindowMs
+    while (buildMetrics.placementTimestamps.length > 0 && buildMetrics.placementTimestamps[0] < cutoff) {
+      buildMetrics.placementTimestamps.shift()
+    }
+  }
+
+  function getPlacementsPerMinute () {
+    if (!buildMetrics.startedAt) return 0
+    const windowMinutes = placementWindowMs / 60000
+    return buildMetrics.placementTimestamps.length / windowMinutes
+  }
+
+  function estimateRemainingCells () {
+    if (!buildMetrics.lastLayerCellCount) return null
+    const estimatedTotalCells = cfg.layers * buildMetrics.lastLayerCellCount
+    const remaining = Math.max(estimatedTotalCells - buildMetrics.totalPlaced, 0)
+    return { remaining, estimatedTotalCells }
+  }
+
+  function getEtaMs (placementsPerMinute) {
+    const remainingInfo = estimateRemainingCells()
+    if (!remainingInfo || placementsPerMinute <= 0) return null
+    const minutesRemaining = remainingInfo.remaining / placementsPerMinute
+    return Math.max(minutesRemaining * 60 * 1000, 0)
+  }
 
   function emitLog (level, message) {
     const payload = { level, message, timestamp: Date.now() }
@@ -78,6 +127,7 @@ function createBuildController ({
       await ensureVerticalSpine(origin, layer)
       inventory.requireCobblestoneForLayer(layer)
       const cells = buildGridTasks(origin, layer)
+      buildMetrics.lastLayerCellCount = cells.length
       const startCell = layer === checkpoint.layer ? checkpoint.cell : 0
       const remainingFromStart = cells.length - startCell
       updateProgress({ cellsTotal: cells.length, cell: startCell })
@@ -95,6 +145,7 @@ function createBuildController ({
         const task = cells[i]
         await placeCactusStack(task.sandPos, task.scaffoldOffsetX)
         await refillManager.tryOpportunisticRefill(false)
+        recordPlacement()
 
         const nextCell = i + 1
         updateProgress({
@@ -122,6 +173,7 @@ function createBuildController ({
     }
 
     stopRequested = false
+    resetMetrics()
     setState('running', 'running')
 
     runPromise = (async () => {
@@ -173,10 +225,22 @@ function createBuildController ({
   }
 
   function getStatus () {
+    const placementsPerMinute = getPlacementsPerMinute()
+    const remainingInfo = estimateRemainingCells()
+    const etaMs = getEtaMs(placementsPerMinute)
     return {
       state,
       stopRequested,
-      ...progress
+      ...progress,
+      metrics: {
+        placementsPerMinute,
+        etaMs,
+        totalPlaced: buildMetrics.totalPlaced,
+        estimatedTotalCells: remainingInfo ? remainingInfo.estimatedTotalCells : null,
+        remainingCells: remainingInfo ? remainingInfo.remaining : null,
+        startedAt: buildMetrics.startedAt,
+        lastPlacementAt: buildMetrics.lastPlacementAt
+      }
     }
   }
 
