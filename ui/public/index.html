@@ -8,6 +8,13 @@
   </head>
   <body>
     <div id="toast" class="global-alert" aria-live="polite"></div>
+    <div id="alert-bar" class="alert-bar hidden" role="status" aria-live="assertive">
+      <div>
+        <strong id="alert-bar-title">Info</strong>
+        <p id="alert-bar-message"></p>
+      </div>
+      <button id="alert-bar-ack" type="button">Dismiss</button>
+    </div>
 
     <main class="layout-shell">
       <header class="topbar card">

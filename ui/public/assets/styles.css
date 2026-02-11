@@ -44,6 +44,59 @@ hr {
   box-shadow: var(--shadow);
 }
 
+
+.alert-bar {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  transform: translate(-50%, 0);
+  width: min(960px, calc(100% - 28px));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  z-index: 120;
+}
+
+.alert-bar p {
+  margin: 4px 0 0;
+}
+
+.alert-bar.hidden {
+  display: none;
+}
+
+.alert-bar.info {
+  color: #d7ebff;
+  border-color: #3a6fa6;
+  background: linear-gradient(180deg, #1d3553, #15283f);
+}
+
+.alert-bar.warning {
+  color: #ffe8a7;
+  border-color: #8b6a1e;
+  background: linear-gradient(180deg, #4e3a11, #3d2f0e);
+}
+
+.alert-bar.error {
+  color: #ffd8d8;
+  border-color: #8c2d2d;
+  background: linear-gradient(180deg, #4f1a1a, #3e1414);
+}
+
+#alert-bar-ack {
+  border-color: currentColor;
+  color: inherit;
+  white-space: nowrap;
+}
+
+#alert-bar-ack.hidden {
+  display: none;
+}
 .layout-shell {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -53,7 +106,7 @@ hr {
     'logs'
     'controls';
   gap: 14px;
-  padding-top: 54px;
+  padding-top: 108px;
 }
 
 .topbar {
