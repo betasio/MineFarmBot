@@ -48,7 +48,6 @@ function createCheckpointManager (cfgLayers) {
     } catch (err) {
       console.warn(`[WARN] Failed to clear checkpoint file: ${err.message}`)
     }
-  }
 
   function resetState () {}
 
@@ -56,6 +55,7 @@ function createCheckpointManager (cfgLayers) {
     loadCheckpoint,
     saveCheckpoint,
     clearCheckpoint,
+    getSnapshot,
     resetState
   }
 }
