@@ -31,6 +31,7 @@ function createBuildController ({
   let buildMetrics = {
     startedAt: null,
     lastPlacementAt: null,
+    checkpointSavedAt: null,
     totalPlaced: 0,
     placementTimestamps: [],
     lastLayerCellCount: 0,
@@ -41,6 +42,7 @@ function createBuildController ({
     buildMetrics = {
       startedAt: Date.now(),
       lastPlacementAt: null,
+      checkpointSavedAt: null,
       totalPlaced: 0,
       placementTimestamps: [],
       lastLayerCellCount: 0,
@@ -63,6 +65,17 @@ function createBuildController ({
     if (!buildMetrics.startedAt) return 0
     const windowMinutes = placementWindowMs / 60000
     return buildMetrics.placementTimestamps.length / windowMinutes
+  }
+
+  function saveCheckpoint (layer, cell) {
+    checkpointManager.saveCheckpoint(layer, cell)
+    buildMetrics.checkpointSavedAt = Date.now()
+  }
+
+  function getPauseReason () {
+    if (state === 'paused') return 'build paused by controller'
+    if (state === 'stopping' || stopRequested) return 'stopping at next safe checkpoint'
+    return null
   }
 
   function estimateRemainingCells () {
@@ -302,8 +315,10 @@ function createBuildController ({
 
   function getStatus () {
     const placementsPerMinute = getPlacementsPerMinute()
+    const blocksPerHour = placementsPerMinute * 60
     const remainingInfo = estimateRemainingCells()
     const etaMs = getEtaMs(placementsPerMinute)
+    const pauseReason = getPauseReason()
     return {
       state,
       stopRequested,
@@ -312,6 +327,7 @@ function createBuildController ({
       ...progress,
       metrics: {
         placementsPerMinute,
+        blocksPerHour,
         etaMs,
         totalPlaced: buildMetrics.totalPlaced,
         estimatedTotalCells: remainingInfo ? remainingInfo.estimatedTotalCells : null,
