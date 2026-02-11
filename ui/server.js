@@ -7,6 +7,17 @@ const { loadConfig, validateConfig } = require('../config')
 
 const MAX_CONTROL_PAYLOAD_BYTES = 4096
 const SSE_HEARTBEAT_MS = 15000
+const REQUIRED_CONFIG_FIELDS = [
+  'host',
+  'port',
+  'username',
+  'origin.x',
+  'origin.y',
+  'origin.z',
+  'safePlatform.x',
+  'safePlatform.y',
+  'safePlatform.z'
+]
 
 function formatSse (event, data) {
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
@@ -18,6 +29,19 @@ function jsonResponse (res, statusCode, payload) {
     'Cache-Control': 'no-store'
   })
   res.end(JSON.stringify(payload))
+}
+
+function getByPath (obj, pathStr) {
+  return pathStr.split('.').reduce((acc, key) => (acc && Object.prototype.hasOwnProperty.call(acc, key) ? acc[key] : undefined), obj)
+}
+
+function getMissingRequiredFields (config) {
+  const missing = []
+  for (const field of REQUIRED_CONFIG_FIELDS) {
+    const value = getByPath(config, field)
+    if (value == null || value === '' || (typeof value === 'number' && Number.isNaN(value))) missing.push(field)
+  }
+  return missing
 }
 
 function guessContentType (filePath) {
@@ -147,17 +171,8 @@ function startUiServer ({ engine, cfg }) {
       jsonResponse(res, 200, {
         ok: true,
         config: loaded,
-        requiredFields: [
-          'host',
-          'port',
-          'username',
-          'origin.x',
-          'origin.y',
-          'origin.z',
-          'safePlatform.x',
-          'safePlatform.y',
-          'safePlatform.z'
-        ]
+        requiredFields: REQUIRED_CONFIG_FIELDS,
+        missingRequiredFields: getMissingRequiredFields(loaded)
       })
       return
     }
@@ -212,10 +227,29 @@ function startUiServer ({ engine, cfg }) {
               }
             }
           })
+          const missingRequiredFields = getMissingRequiredFields(validated)
+          if (missingRequiredFields.length > 0) {
+            jsonResponse(res, 400, {
+              ok: false,
+              error: 'Required configuration fields are missing.',
+              missingRequiredFields,
+              requiredFields: REQUIRED_CONFIG_FIELDS
+            })
+            return
+          }
+
+          if (fs.existsSync(configPath)) {
+            try {
+              fs.copyFileSync(configPath, `${configPath}.bak`)
+            } catch {}
+          }
+
           saveConfigToDisk(validated)
           jsonResponse(res, 200, {
             ok: true,
             config: validated,
+            requiredFields: REQUIRED_CONFIG_FIELDS,
+            missingRequiredFields: [],
             message: 'Configuration saved. Restart bot process to apply connection-level changes.'
           })
         } catch (err) {
@@ -250,57 +284,6 @@ function startUiServer ({ engine, cfg }) {
         })
         fs.createReadStream(fullPath).pipe(res)
       })
-
-      req.on('end', async () => {
-        let payload
-        try {
-          payload = body ? JSON.parse(body) : {}
-        } catch {
-          jsonResponse(res, 400, { ok: false, error: 'Invalid JSON payload' })
-          return
-        }
-
-        const action = String(payload.action || '').toLowerCase()
-        if (!action) {
-          jsonResponse(res, 400, { ok: false, error: 'Missing action' })
-          return
-        }
-
-        try {
-          if (action === 'start') {
-            await engine.startBuild()
-            jsonResponse(res, 200, { ok: true, action, accepted: true })
-            return
-          }
-
-          if (action === 'pause') {
-            const accepted = engine.pauseBuild()
-            jsonResponse(res, 200, { ok: accepted, action, accepted })
-            return
-          }
-
-          if (action === 'resume') {
-            const accepted = engine.resumeBuild()
-            jsonResponse(res, 200, { ok: accepted, action, accepted })
-            return
-          }
-
-          if (action === 'stop') {
-            const accepted = engine.stopBuild()
-            jsonResponse(res, 200, { ok: accepted, action, accepted })
-            return
-          }
-
-          jsonResponse(res, 400, { ok: false, error: `Unsupported action: ${action}` })
-        } catch (err) {
-          jsonResponse(res, 500, { ok: false, error: err.message })
-        }
-      })
-
-      req.on('error', () => {
-        if (!res.headersSent) jsonResponse(res, 400, { ok: false, error: 'Failed to read request body' })
-      })
-
       return
     }
 

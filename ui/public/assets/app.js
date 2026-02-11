@@ -37,7 +37,8 @@ const els = {
   closeConfigBtn: document.getElementById('close-config-btn'),
   reloadConfigBtn: document.getElementById('reload-config-btn'),
   configForm: document.getElementById('config-form'),
-  configMessage: document.getElementById('config-message')
+  configMessage: document.getElementById('config-message'),
+  configRequiredAlert: document.getElementById('config-required-alert')
 }
 
 const state = {
@@ -50,7 +51,19 @@ const state = {
   eventStream: null,
   controlsInFlight: false,
   toastTimer: null,
-  configRequiredFields: []
+  configRequiredFields: [],
+  missingRequiredFields: []
+}
+
+function showToast (message) {
+  if (!els.toast) return
+  if (state.toastTimer) clearTimeout(state.toastTimer)
+  els.toast.textContent = message
+  els.toast.classList.add('show')
+  state.toastTimer = setTimeout(() => {
+    els.toast.classList.remove('show')
+    state.toastTimer = null
+  }, 2400)
 }
 
 function formatDuration (ms) {
@@ -71,47 +84,60 @@ function formatTime (ts) {
 
 function levelOf (entry) {
   const level = String(entry.level || 'info').toLowerCase()
-  if (level === 'error' || level === 'warn' || level === 'info') return level
-  return 'info'
+  return ['error', 'warn', 'info'].includes(level) ? level : 'info'
 }
-
-function showToast (message) {
-  if (!els.toast) return
-  if (state.toastTimer) {
-    clearTimeout(state.toastTimer)
-    state.toastTimer = null
-  }
-
-  els.toast.textContent = message
-  els.toast.classList.add('show')
-  state.toastTimer = setTimeout(() => {
-    els.toast.classList.remove('show')
-    state.toastTimer = null
-  }, 2500)
-}
-
-
 
 function setByPath (obj, path, value) {
   const keys = path.split('.')
   let cursor = obj
   for (let i = 0; i < keys.length - 1; i++) {
-    const k = keys[i]
-    if (!cursor[k] || typeof cursor[k] !== 'object') cursor[k] = {}
-    cursor = cursor[k]
+    const key = keys[i]
+    if (!cursor[key] || typeof cursor[key] !== 'object') cursor[key] = {}
+    cursor = cursor[key]
   }
   cursor[keys[keys.length - 1]] = value
 }
 
 function getByPath (obj, path) {
-  return path.split('.').reduce((acc, k) => (acc && Object.prototype.hasOwnProperty.call(acc, k) ? acc[k] : undefined), obj)
+  return path.split('.').reduce((acc, key) => (acc && Object.prototype.hasOwnProperty.call(acc, key) ? acc[key] : undefined), obj)
+}
+
+function updateConfigHealthBanner () {
+  if (!els.configRequiredAlert) return
+  const missing = state.missingRequiredFields
+  if (!missing || missing.length === 0) {
+    els.configRequiredAlert.hidden = true
+    return
+  }
+  els.configRequiredAlert.hidden = false
+  els.configRequiredAlert.textContent = `Setup required: missing ${missing.join(', ')}. Open Setup Wizard before starting.`
+}
+
+function updateStartButtonEnabled () {
+  const startBtn = document.querySelector('[data-action="start"]')
+  if (!startBtn) return
+  const missing = state.missingRequiredFields || []
+  startBtn.disabled = missing.length > 0 || state.controlsInFlight
+}
+
+function validateRequiredInForm () {
+  const missing = []
+  for (const field of state.configRequiredFields) {
+    const input = els.configForm.querySelector(`[name="${CSS.escape(field)}"]`)
+    if (!input) continue
+    const value = input.type === 'checkbox' ? input.checked : input.value.trim()
+    const invalid = value === '' || value == null
+    input.classList.toggle('field-invalid', invalid)
+    if (invalid) missing.push(field)
+  }
+  return missing
 }
 
 function markRequiredConfigFields () {
   for (const input of els.configForm.querySelectorAll('input[name]')) {
     const required = state.configRequiredFields.includes(input.name)
-    input.required = required || input.required
-    input.parentElement.style.color = required ? '#f3cb5d' : ''
+    if (required) input.required = true
+    input.parentElement.classList.toggle('required-field', required)
   }
 }
 
@@ -119,18 +145,9 @@ function fillConfigForm (cfg) {
   for (const input of els.configForm.querySelectorAll('input[name]')) {
     const value = getByPath(cfg, input.name)
     if (input.type === 'checkbox') input.checked = Boolean(value)
-    else if (value == null) input.value = ''
-    else input.value = String(value)
+    else input.value = value == null ? '' : String(value)
+    input.classList.remove('field-invalid')
   }
-}
-
-async function loadConfigForm () {
-  const data = await fetch('/config', { cache: 'no-store' }).then(r => r.json())
-  if (!data.ok) throw new Error(data.error || 'Failed to load config')
-  state.configRequiredFields = Array.isArray(data.requiredFields) ? data.requiredFields : []
-  fillConfigForm(data.config || {})
-  markRequiredConfigFields()
-  els.configMessage.textContent = 'Loaded current configuration.'
 }
 
 function collectConfigFromForm () {
@@ -140,14 +157,36 @@ function collectConfigFromForm () {
     if (input.type === 'checkbox') value = input.checked
     else if (input.type === 'number') value = input.value === '' ? null : Number(input.value)
     else value = input.value.trim()
-
     if (value === '' || Number.isNaN(value)) continue
     setByPath(payload, input.name, value)
   }
   return payload
 }
 
+async function loadConfigForm () {
+  const data = await fetch('/config', { cache: 'no-store' }).then(r => r.json())
+  if (!data.ok) throw new Error(data.error || 'Failed to load config')
+  state.configRequiredFields = Array.isArray(data.requiredFields) ? data.requiredFields : []
+  state.missingRequiredFields = Array.isArray(data.missingRequiredFields) ? data.missingRequiredFields : []
+  fillConfigForm(data.config || {})
+  markRequiredConfigFields()
+  validateRequiredInForm()
+  updateConfigHealthBanner()
+  updateStartButtonEnabled()
+  els.configMessage.textContent = state.missingRequiredFields.length > 0
+    ? `Missing required fields: ${state.missingRequiredFields.join(', ')}`
+    : 'Loaded current configuration.'
+}
+
 async function saveConfigForm () {
+  const missing = validateRequiredInForm()
+  if (missing.length > 0) {
+    state.missingRequiredFields = missing
+    updateConfigHealthBanner()
+    updateStartButtonEnabled()
+    throw new Error(`Missing required fields: ${missing.join(', ')}`)
+  }
+
   const payload = collectConfigFromForm()
   const result = await fetch('/config', {
     method: 'POST',
@@ -156,23 +195,32 @@ async function saveConfigForm () {
   })
   const body = await result.json().catch(() => ({}))
   if (!result.ok || body.ok === false) {
+    if (Array.isArray(body.missingRequiredFields)) {
+      state.missingRequiredFields = body.missingRequiredFields
+      updateConfigHealthBanner()
+      updateStartButtonEnabled()
+    }
     throw new Error(body.error || 'Failed to save config')
   }
+
+  state.configRequiredFields = Array.isArray(body.requiredFields) ? body.requiredFields : state.configRequiredFields
+  state.missingRequiredFields = Array.isArray(body.missingRequiredFields) ? body.missingRequiredFields : []
   fillConfigForm(body.config || {})
+  markRequiredConfigFields()
+  validateRequiredInForm()
+  updateConfigHealthBanner()
+  updateStartButtonEnabled()
   els.configMessage.textContent = body.message || 'Saved.'
-  showToast('Config saved successfully')
+  showToast('Configuration saved')
 }
+
 function setControlButtonsDisabled (disabled) {
   state.controlsInFlight = disabled
   for (const btn of document.querySelectorAll('[data-action]')) {
+    if (btn.dataset.action === 'start') continue
     btn.disabled = disabled
   }
-}
-
-function trimLogFeedDom () {
-  while (els.logFeed.childElementCount > MAX_LOGS) {
-    els.logFeed.removeChild(els.logFeed.firstElementChild)
-  }
+  updateStartButtonEnabled()
 }
 
 function appendLog (entry) {
@@ -183,19 +231,17 @@ function appendLog (entry) {
   }
 
   state.logEntries.push(payload)
-  if (state.logEntries.length > MAX_LOGS) {
-    state.logEntries.shift()
-  }
+  if (state.logEntries.length > MAX_LOGS) state.logEntries.shift()
 
   const line = document.createElement('p')
   line.className = `log-line ${payload.level}`
   line.textContent = `[${new Date(payload.timestamp).toLocaleTimeString()}] [${payload.level.toUpperCase()}] ${payload.message}`
   els.logFeed.appendChild(line)
-  trimLogFeedDom()
-
-  if (state.autoScroll) {
-    els.logFeed.scrollTop = els.logFeed.scrollHeight
+  while (els.logFeed.childElementCount > MAX_LOGS) {
+    els.logFeed.removeChild(els.logFeed.firstElementChild)
   }
+
+  if (state.autoScroll) els.logFeed.scrollTop = els.logFeed.scrollHeight
 }
 
 function renderMaterials (inventory = {}, refill = {}) {
@@ -207,19 +253,10 @@ function renderMaterials (inventory = {}, refill = {}) {
     const value = Number(inventory[key] || 0)
     const threshold = Number(thresholds[key] || lowThresholdDefaults[key] || 1)
     const fillPct = Math.min((value / Math.max(threshold * 2, 1)) * 100, 100)
-
     const row = document.createElement('div')
     row.className = 'material-row'
-
     const isLow = value <= threshold
-    row.innerHTML = [
-      '<div class="material-head">',
-      `<span>${key[0].toUpperCase() + key.slice(1)}</span>`,
-      `<strong>${value}${isLow ? ' <span class="low">LOW</span>' : ''}</strong>`,
-      '</div>',
-      `<div class="material-bar"><div class="material-fill" style="width:${fillPct}%"></div></div>`
-    ].join('')
-
+    row.innerHTML = `<div class="material-head"><span>${key[0].toUpperCase() + key.slice(1)}</span><strong>${value}${isLow ? ' <span class="low">LOW</span>' : ''}</strong></div><div class="material-bar"><div class="material-fill" style="width:${fillPct}%"></div></div>`
     fragment.appendChild(row)
   }
 
@@ -229,23 +266,12 @@ function renderMaterials (inventory = {}, refill = {}) {
 function renderDynamicTimeFields () {
   const status = state.statusSnapshot
   if (!status) return
-
-  if (status.reconnectAt) {
-    els.reconnectCountdown.textContent = formatDuration(Math.max(status.reconnectAt - Date.now(), 0))
-  } else {
-    els.reconnectCountdown.textContent = '--'
-  }
-
-  if (state.lastActionAt) {
-    els.lastActionAge.textContent = `${formatDuration(Date.now() - state.lastActionAt)} ago`
-  } else {
-    els.lastActionAge.textContent = '--'
-  }
+  els.reconnectCountdown.textContent = status.reconnectAt ? formatDuration(Math.max(status.reconnectAt - Date.now(), 0)) : '--'
+  els.lastActionAge.textContent = state.lastActionAt ? `${formatDuration(Date.now() - state.lastActionAt)} ago` : '--'
 }
 
 function updateStatus (status) {
   state.statusSnapshot = status
-
   const connectionState = status.connectionState || 'offline'
   const connectionCss = ['online', 'reconnecting', 'offline'].includes(connectionState) ? connectionState : 'offline'
   els.connectionBadge.textContent = connectionState.toUpperCase()
@@ -278,22 +304,17 @@ function updateStatus (status) {
   const progressBar = els.progressFill.parentElement
   if (progressBar) progressBar.setAttribute('aria-valuenow', progressPct.toFixed(0))
 
-  if (status.coordinates) {
-    els.coordValue.textContent = `${status.coordinates.x.toFixed(1)}, ${status.coordinates.y.toFixed(1)}, ${status.coordinates.z.toFixed(1)}`
-  } else {
-    els.coordValue.textContent = '--'
-  }
-
+  els.coordValue.textContent = status.coordinates
+    ? `${status.coordinates.x.toFixed(1)}, ${status.coordinates.y.toFixed(1)}, ${status.coordinates.z.toFixed(1)}`
+    : '--'
   els.dimensionValue.textContent = status.dimension || '--'
 
   renderMaterials(status.inventory || {}, status.refill || {})
 
   const refill = status.refill || {}
-  els.refillStatus.textContent = (refill.needsRefill ? 'NEEDS REFILL' : 'OK')
+  els.refillStatus.textContent = refill.needsRefill ? 'NEEDS REFILL' : 'OK'
   const container = refill.lastRefillContainer
-  els.refillContainer.textContent = container
-    ? `${container.name} @ ${container.position.x},${container.position.y},${container.position.z}`
-    : '--'
+  els.refillContainer.textContent = container ? `${container.name} @ ${container.position.x},${container.position.y},${container.position.z}` : '--'
   els.refillTime.textContent = formatTime(refill.lastRefillSuccessAtMs)
 
   renderDynamicTimeFields()
@@ -301,8 +322,12 @@ function updateStatus (status) {
 
 async function sendControl (action) {
   if (state.controlsInFlight) return
-  setControlButtonsDisabled(true)
+  if (action === 'start' && state.missingRequiredFields.length > 0) {
+    showToast('Complete Setup Wizard required fields before starting.')
+    return
+  }
 
+  setControlButtonsDisabled(true)
   try {
     const result = await fetch('/control', {
       method: 'POST',
@@ -311,9 +336,7 @@ async function sendControl (action) {
     })
 
     const payload = await result.json().catch(() => ({}))
-    if (!result.ok || payload.ok === false) {
-      throw new Error(payload.error || `Action failed: ${action}`)
-    }
+    if (!result.ok || payload.ok === false) throw new Error(payload.error || `Action failed: ${action}`)
 
     state.lastActionAt = Date.now()
     appendLog({ level: 'info', message: `Control action accepted: ${action}`, timestamp: Date.now() })
@@ -333,16 +356,11 @@ function exportLogs () {
 }
 
 async function copyLastError () {
-  if (!state.lastError) {
-    showToast('No error to copy yet.')
-    return
-  }
-
+  if (!state.lastError) return showToast('No error to copy yet.')
   if (!navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') {
     appendLog({ level: 'warn', message: 'Clipboard API unavailable in this browser context.', timestamp: Date.now() })
     return
   }
-
   await navigator.clipboard.writeText(state.lastError)
   appendLog({ level: 'info', message: 'Copied last error to clipboard', timestamp: Date.now() })
   showToast('Copied last error.')
@@ -350,15 +368,13 @@ async function copyLastError () {
 
 function setupControls () {
   for (const btn of document.querySelectorAll('[data-action]')) {
-    btn.addEventListener('click', async () => {
+    btn.addEventListener('click', () => {
       const action = btn.getAttribute('data-action')
-      try {
-        await sendControl(action)
-      } catch (err) {
+      sendControl(action).catch(err => {
         state.lastError = err.message
         appendLog({ level: 'error', message: err.message, timestamp: Date.now() })
         showToast(err.message)
-      }
+      })
     })
   }
 
@@ -376,20 +392,16 @@ function setupControls () {
   els.exportLogBtn.addEventListener('click', exportLogs)
   els.copyErrorBtn.addEventListener('click', () => copyLastError().catch(() => {}))
 
-  els.openConfigBtn.addEventListener('click', async () => {
-    try {
-      await loadConfigForm()
+  els.openConfigBtn.addEventListener('click', () => {
+    loadConfigForm().then(() => {
       els.configDialog.showModal()
-    } catch (err) {
+    }).catch(err => {
       appendLog({ level: 'error', message: err.message, timestamp: Date.now() })
       showToast(err.message)
-    }
+    })
   })
 
-  els.closeConfigBtn.addEventListener('click', () => {
-    els.configDialog.close()
-  })
-
+  els.closeConfigBtn.addEventListener('click', () => els.configDialog.close())
   els.reloadConfigBtn.addEventListener('click', () => {
     loadConfigForm().catch(err => {
       els.configMessage.textContent = err.message
@@ -397,7 +409,14 @@ function setupControls () {
     })
   })
 
-  els.configForm.addEventListener('submit', (event) => {
+  els.configForm.addEventListener('input', () => {
+    const missing = validateRequiredInForm()
+    els.configMessage.textContent = missing.length > 0
+      ? `Missing required fields: ${missing.join(', ')}`
+      : 'All required fields are present.'
+  })
+
+  els.configForm.addEventListener('submit', event => {
     event.preventDefault()
     saveConfigForm().catch(err => {
       els.configMessage.textContent = err.message
@@ -410,33 +429,25 @@ function onErrorEvent (payload) {
   state.lastError = payload.message || 'Unknown error'
   appendLog(payload)
   els.errorSound.play().catch(() => {})
-
   if (window.Notification && Notification.permission === 'granted') {
     new Notification('MineFarmBot Error', { body: state.lastError })
   }
 }
 
 function teardownEventStream () {
-  if (state.eventStream) {
-    state.eventStream.close()
-    state.eventStream = null
-  }
+  if (!state.eventStream) return
+  state.eventStream.close()
+  state.eventStream = null
 }
 
 function setupEventStream () {
   teardownEventStream()
-
-  const stream = new EventSource('/events')
-  state.eventStream = stream
-
-  stream.addEventListener('status', event => updateStatus(JSON.parse(event.data)))
-  stream.addEventListener('log', event => appendLog(JSON.parse(event.data)))
-  stream.addEventListener('warning', event => appendLog(JSON.parse(event.data)))
-  stream.addEventListener('error', event => onErrorEvent(JSON.parse(event.data)))
-
-  stream.onerror = () => {
-    appendLog({ level: 'warn', message: 'Event stream interrupted. Browser will retry automatically.', timestamp: Date.now() })
-  }
+  state.eventStream = new EventSource('/events')
+  state.eventStream.addEventListener('status', event => updateStatus(JSON.parse(event.data)))
+  state.eventStream.addEventListener('log', event => appendLog(JSON.parse(event.data)))
+  state.eventStream.addEventListener('warning', event => appendLog(JSON.parse(event.data)))
+  state.eventStream.addEventListener('error', event => onErrorEvent(JSON.parse(event.data)))
+  state.eventStream.onerror = () => appendLog({ level: 'warn', message: 'Event stream interrupted. Browser will retry automatically.', timestamp: Date.now() })
 }
 
 async function init () {
@@ -446,11 +457,13 @@ async function init () {
     Notification.requestPermission().catch(() => {})
   }
 
-  const status = await fetch('/status', { cache: 'no-store' }).then(r => r.json())
-  updateStatus(status)
-  loadConfigForm().catch(() => {})
-  setupEventStream()
+  const [status] = await Promise.all([
+    fetch('/status', { cache: 'no-store' }).then(r => r.json()),
+    loadConfigForm().catch(() => {})
+  ])
 
+  updateStatus(status)
+  setupEventStream()
   state.updateTicker = setInterval(renderDynamicTimeFields, 1000)
 
   window.addEventListener('beforeunload', () => {

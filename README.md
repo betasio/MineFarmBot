@@ -70,9 +70,12 @@ The bot now exposes a lightweight GUI transport (HTTP + SSE) for a browser-based
 - `GET /events` — Server-Sent Events (SSE) stream (`status`, `log`, `warning`, `error`).
 - `POST /control` — operator command bridge (`start`, `pause`, `resume`, `stop`).
 - `GET /config` — load effective config for Setup Wizard (includes required fields list).
-- `POST /config` — persist validated config updates from Setup Wizard.
+- `POST /config` — persist validated config updates from Setup Wizard (writes `config.json` and keeps a `config.json.bak` backup).
 
 ### Operator controls
+
+Setup Wizard validates required fields before run and prevents Start while mandatory configuration is missing.
+
 
 - **Start**: begins the build from the configured `origin` and initializes progress tracking.
 - **Pause**: halts work at the next safe checkpoint without logging out.

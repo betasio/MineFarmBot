@@ -372,3 +372,34 @@ button {
     grid-template-columns: 1fr;
   }
 }
+
+.config-required-alert {
+  margin: 0 0 12px;
+  background: rgba(243, 203, 93, 0.15);
+  border: 1px solid rgba(243, 203, 93, 0.6);
+  color: #f6d56f;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-weight: 600;
+}
+
+.wizard-section {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  margin-bottom: 10px;
+  background: rgba(255, 255, 255, 0.01);
+}
+
+.wizard-section h4 {
+  margin: 0 0 8px;
+}
+
+.required-field {
+  color: #f4cf6f !important;
+}
+
+.field-invalid {
+  border-color: #f76969 !important;
+  box-shadow: 0 0 0 1px rgba(247, 105, 105, 0.25);
+}

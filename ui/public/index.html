@@ -25,6 +25,8 @@
       </div>
     </header>
 
+    <div id="config-required-alert" class="config-required-alert" hidden>Setup required: complete required fields in Setup Wizard before starting.</div>
+
     <main class="dashboard-grid">
       <section class="card">
         <h2>Build Progress</h2>
@@ -82,44 +84,53 @@
           <h3>Bot Setup Wizard</h3>
           <button type="button" id="close-config-btn">✕</button>
         </div>
-        <p class="help-text">Fields marked <strong>* Required</strong> are needed for a successful bot run.</p>
+        <p class="help-text">Fields marked <strong>* Required</strong> are mandatory before the bot can run.</p>
 
-        <div class="config-grid">
-          <label>Server Host * Required<input name="host" required /></label>
-          <label>Server Port * Required<input name="port" type="number" min="1" required /></label>
-          <label>Username * Required<input name="username" required /></label>
-          <label>Password<input name="password" /></label>
-          <label>Auth<input name="auth" /></label>
-          <label>Version<input name="version" /></label>
+        <section class="wizard-section">
+          <h4>Connection</h4>
+          <div class="config-grid">
+            <label>Server Host * Required<input name="host" required /></label>
+            <label>Server Port * Required<input name="port" type="number" min="1" required /></label>
+            <label>Username * Required<input name="username" required /></label>
+            <label>Password<input name="password" /></label>
+            <label>Auth<input name="auth" /></label>
+            <label>Version<input name="version" /></label>
+          </div>
+        </section>
 
-          <label>Layers<input name="layers" type="number" min="1" /></label>
-          <label>Build Delay Ticks<input name="buildDelayTicks" type="number" min="1" /></label>
-          <label>Facing Yaw Degrees<input name="facingYawDegrees" type="number" /></label>
+        <section class="wizard-section">
+          <h4>Build</h4>
+          <div class="config-grid">
+            <label>Layers<input name="layers" type="number" min="1" /></label>
+            <label>Build Delay Ticks<input name="buildDelayTicks" type="number" min="1" /></label>
+            <label>Facing Yaw Degrees<input name="facingYawDegrees" type="number" /></label>
+            <label>Origin X * Required<input name="origin.x" type="number" required /></label>
+            <label>Origin Y * Required<input name="origin.y" type="number" required /></label>
+            <label>Origin Z * Required<input name="origin.z" type="number" required /></label>
+            <label>Safe Platform X * Required<input name="safePlatform.x" type="number" required /></label>
+            <label>Safe Platform Y * Required<input name="safePlatform.y" type="number" required /></label>
+            <label>Safe Platform Z * Required<input name="safePlatform.z" type="number" required /></label>
+            <label class="checkline"><input name="removeScaffold" type="checkbox" /> Remove scaffold</label>
+          </div>
+        </section>
 
-          <label>Origin X * Required<input name="origin.x" type="number" required /></label>
-          <label>Origin Y * Required<input name="origin.y" type="number" required /></label>
-          <label>Origin Z * Required<input name="origin.z" type="number" required /></label>
-
-          <label>Safe Platform X * Required<input name="safePlatform.x" type="number" required /></label>
-          <label>Safe Platform Y * Required<input name="safePlatform.y" type="number" required /></label>
-          <label>Safe Platform Z * Required<input name="safePlatform.z" type="number" required /></label>
-
-          <label class="checkline"><input name="removeScaffold" type="checkbox" /> Remove scaffold</label>
-          <label class="checkline"><input name="refill.enabled" type="checkbox" /> Refill enabled</label>
-          <label>Refill Radius<input name="refill.radius" type="number" min="2" /></label>
-          <label>Refill Cooldown ms<input name="refill.cooldownMs" type="number" min="1000" /></label>
-          <label>Refill Ignore-Empty ms<input name="refill.ignoreEmptyMs" type="number" min="1000" /></label>
-
-          <label>Threshold Sand<input name="refill.thresholds.sand" type="number" min="1" /></label>
-          <label>Threshold Cactus<input name="refill.thresholds.cactus" type="number" min="1" /></label>
-          <label>Threshold String<input name="refill.thresholds.string" type="number" min="1" /></label>
-          <label>Threshold Cobblestone<input name="refill.thresholds.cobblestone" type="number" min="1" /></label>
-
-          <label>Target Stacks Sand<input name="refill.targetStacks.sand" type="number" min="1" /></label>
-          <label>Target Stacks Cactus<input name="refill.targetStacks.cactus" type="number" min="1" /></label>
-          <label>Target Stacks String<input name="refill.targetStacks.string" type="number" min="1" /></label>
-          <label>Target Stacks Cobblestone<input name="refill.targetStacks.cobblestone" type="number" min="1" /></label>
-        </div>
+        <section class="wizard-section">
+          <h4>Refill</h4>
+          <div class="config-grid">
+            <label class="checkline"><input name="refill.enabled" type="checkbox" /> Refill enabled</label>
+            <label>Refill Radius<input name="refill.radius" type="number" min="2" /></label>
+            <label>Refill Cooldown ms<input name="refill.cooldownMs" type="number" min="1000" /></label>
+            <label>Refill Ignore-Empty ms<input name="refill.ignoreEmptyMs" type="number" min="1000" /></label>
+            <label>Threshold Sand<input name="refill.thresholds.sand" type="number" min="1" /></label>
+            <label>Threshold Cactus<input name="refill.thresholds.cactus" type="number" min="1" /></label>
+            <label>Threshold String<input name="refill.thresholds.string" type="number" min="1" /></label>
+            <label>Threshold Cobblestone<input name="refill.thresholds.cobblestone" type="number" min="1" /></label>
+            <label>Target Stacks Sand<input name="refill.targetStacks.sand" type="number" min="1" /></label>
+            <label>Target Stacks Cactus<input name="refill.targetStacks.cactus" type="number" min="1" /></label>
+            <label>Target Stacks String<input name="refill.targetStacks.string" type="number" min="1" /></label>
+            <label>Target Stacks Cobblestone<input name="refill.targetStacks.cobblestone" type="number" min="1" /></label>
+          </div>
+        </section>
 
         <p id="config-message" class="help-text"></p>
 
