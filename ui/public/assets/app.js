@@ -6,10 +6,6 @@ const lowThresholdDefaults = { sand: 64, cactus: 64, string: 64, cobblestone: 12
 const els = {
   toast: document.getElementById('toast'),
   serverMeta: document.getElementById('server-meta'),
-  alertBar: document.getElementById('alert-bar'),
-  alertBarTitle: document.getElementById('alert-bar-title'),
-  alertBarMessage: document.getElementById('alert-bar-message'),
-  alertBarAck: document.getElementById('alert-bar-ack'),
   connectionBadge: document.getElementById('connection-badge'),
   pingValue: document.getElementById('ping-value'),
   lagValue: document.getElementById('lag-value'),
@@ -23,14 +19,8 @@ const els = {
   etaValue: document.getElementById('eta-value'),
   ppmValue: document.getElementById('ppm-value'),
   checkpointValue: document.getElementById('checkpoint-value'),
-  lastPlacementAgeValue: document.getElementById('last-placement-age'),
-  checkpointAgeValue: document.getElementById('checkpoint-age-value'),
   coordValue: document.getElementById('coord-value'),
   dimensionValue: document.getElementById('dimension-value'),
-  botModeValue: document.getElementById('bot-mode-value'),
-  pauseReasonValue: document.getElementById('pause-reason-value'),
-  movementValue: document.getElementById('movement-value'),
-  lookAtValue: document.getElementById('look-at-value'),
   lastActionAge: document.getElementById('last-action-age'),
   logFeed: document.getElementById('log-feed'),
   materialsPanel: document.getElementById('materials-panel'),
@@ -41,14 +31,7 @@ const els = {
   pauseScrollBtn: document.getElementById('pause-scroll-btn'),
   clearLogBtn: document.getElementById('clear-log-btn'),
   exportLogBtn: document.getElementById('export-log-btn'),
-  copyErrorBtn: document.getElementById('copy-error-btn'),
-  filterInfo: document.getElementById('filter-info'),
-  filterAction: document.getElementById('filter-action'),
-  filterWarn: document.getElementById('filter-warn'),
-  filterError: document.getElementById('filter-error'),
-  logSearch: document.getElementById('log-search'),
-  holdStopToggle: document.getElementById('hold-stop-toggle'),
-  commandResult: document.getElementById('command-result')
+  copyErrorBtn: document.getElementById('copy-error-btn')
 }
 
 const state = {
@@ -60,203 +43,7 @@ const state = {
   updateTicker: null,
   eventStream: null,
   controlsInFlight: false,
-  toastTimer: null,
-  alertConditions: {},
-  conditionMeta: {
-    disconnected: { severity: 'error', priority: 100, sticky: true },
-    reconnecting: { severity: 'warning', priority: 80 },
-    lowMaterialHardStop: { severity: 'error', priority: 90, sticky: true },
-    repeatedPathErrors: { severity: 'warning', priority: 70 },
-    sseWarning: { severity: 'warning', priority: 60 },
-    sseError: { severity: 'error', priority: 95, sticky: true }
-  },
-  previousConnectionState: null,
-  pathErrorWindowMs: 4 * 60 * 1000,
-  pathErrorTimestamps: [],
-  repeatedPathThreshold: 3,
-  logFilters: {
-    info: true,
-    action: true,
-    warn: true,
-    error: true
-  },
-  logSearchTerm: '',
-  holdStopEnabled: true,
-  holdStopTimer: null,
-  pendingHoldAction: null,
-  commandResult: { state: 'idle', message: 'No command sent yet.' }
-}
-
-const CONTROL_ACTIONS = new Set(['start', 'pause', 'resume', 'stop', 'reconnect', 'force_refill', 'return_home', 'open_checkpoint'])
-
-const HOLD_TO_CONFIRM_MS = 900
-const COMMAND_RESULT_STATES = new Set(['idle', 'pending', 'success', 'failure'])
-
-function isBuildActive (snapshot = state.statusSnapshot) {
-  const build = (snapshot && snapshot.build) || {}
-  const buildState = String(build.state || build.status || '').toLowerCase()
-  return buildState === 'running' || buildState === 'paused' || buildState === 'stopping' || Boolean(build.stopRequested)
-}
-
-function getConfirmationRequirement (action) {
-  const status = state.statusSnapshot || {}
-  const buildActive = isBuildActive(status)
-
-  if (action === 'start' && buildActive) {
-    return {
-      type: 'confirm',
-      message: 'Build is already active. Send START anyway?'
-    }
-  }
-
-  if (action === 'stop' && buildActive) {
-    return state.holdStopEnabled
-      ? {
-          type: 'hold',
-          message: `Hold SAFE STOP for ${Math.round(HOLD_TO_CONFIRM_MS / 100) / 10}s to confirm.`
-        }
-      : {
-          type: 'confirm',
-          message: 'SAFE STOP will halt the active build at the next safe checkpoint. Continue?'
-        }
-  }
-
-  if (action === 'reconnect' && buildActive) {
-    return {
-      type: 'confirm',
-      message: 'Reconnect during active build can interrupt placement. Continue?'
-    }
-  }
-
-  return null
-}
-
-function renderCommandResult () {
-  if (!els.commandResult) return
-  const info = state.commandResult || { state: 'idle', message: 'No command sent yet.' }
-  const resultState = COMMAND_RESULT_STATES.has(info.state) ? info.state : 'idle'
-  els.commandResult.className = `command-result ${resultState}`
-  els.commandResult.textContent = info.message || 'No command sent yet.'
-}
-
-function setCommandResult (resultState, message) {
-  state.commandResult = {
-    state: COMMAND_RESULT_STATES.has(resultState) ? resultState : 'idle',
-    message: String(message || '').trim() || 'No command sent yet.'
-  }
-  renderCommandResult()
-}
-
-function cancelHoldToConfirm () {
-  if (state.holdStopTimer) {
-    clearTimeout(state.holdStopTimer)
-    state.holdStopTimer = null
-  }
-  state.pendingHoldAction = null
-}
-
-
-function buildAlertCondition (key, message, overrides = {}) {
-  const base = state.conditionMeta[key] || {}
-  return {
-    key,
-    message,
-    severity: overrides.severity || base.severity || 'info',
-    priority: overrides.priority ?? base.priority ?? 10,
-    sticky: overrides.sticky ?? Boolean(base.sticky),
-    acknowledged: false
-  }
-}
-
-function setAlertCondition (key, message, overrides = {}) {
-  state.alertConditions[key] = buildAlertCondition(key, message, overrides)
-  renderAlertBar()
-}
-
-function clearAlertCondition (key) {
-  if (!state.alertConditions[key]) return
-  delete state.alertConditions[key]
-  renderAlertBar()
-}
-
-function acknowledgeCurrentAlert () {
-  const active = getHighestPriorityAlert()
-  if (!active) return
-  if (!active.sticky) {
-    clearAlertCondition(active.key)
-    return
-  }
-
-  state.alertConditions[active.key] = { ...active, acknowledged: true }
-  renderAlertBar()
-}
-
-function getHighestPriorityAlert () {
-  const active = Object.values(state.alertConditions).filter(item => item && (!item.sticky || !item.acknowledged))
-  if (active.length === 0) return null
-
-  active.sort((a, b) => {
-    if (a.priority !== b.priority) return b.priority - a.priority
-    const rank = { error: 3, warning: 2, info: 1 }
-    return (rank[b.severity] || 0) - (rank[a.severity] || 0)
-  })
-
-  return active[0]
-}
-
-function renderAlertBar () {
-  if (!els.alertBar || !els.alertBarMessage || !els.alertBarTitle || !els.alertBarAck) return
-
-  const active = getHighestPriorityAlert()
-  if (!active) {
-    els.alertBar.className = 'alert-bar hidden'
-    els.alertBarTitle.textContent = 'Info'
-    els.alertBarMessage.textContent = ''
-    els.alertBarAck.classList.add('hidden')
-    return
-  }
-
-  els.alertBar.className = `alert-bar ${active.severity}`
-  els.alertBarTitle.textContent = active.severity.toUpperCase()
-  els.alertBarMessage.textContent = active.message
-  if (active.sticky) {
-    els.alertBarAck.classList.remove('hidden')
-    els.alertBarAck.textContent = 'Acknowledge'
-  } else {
-    els.alertBarAck.classList.add('hidden')
-  }
-}
-
-function shouldTrackPathError (message) {
-  const text = String(message || '').toLowerCase()
-  return text.includes('path') || text.includes('goal') || text.includes('stuck')
-}
-
-function updateRepeatedPathAlert (message) {
-  if (!shouldTrackPathError(message)) return
-
-  const now = Date.now()
-  state.pathErrorTimestamps = state.pathErrorTimestamps.filter(ts => (now - ts) <= state.pathErrorWindowMs)
-  state.pathErrorTimestamps.push(now)
-
-  if (state.pathErrorTimestamps.length >= state.repeatedPathThreshold) {
-    setAlertCondition('repeatedPathErrors', 'Repeated pathing failures detected. Check for obstructions and bot footing.')
-  }
-}
-
-function mapIncomingAlertFromEvent (payload) {
-  const message = String(payload && payload.message ? payload.message : '')
-  const lower = message.toLowerCase()
-
-  if (lower.includes('materials low')) {
-    setAlertCondition('lowMaterialHardStop', 'Low materials detected. Build is blocked until refill succeeds.')
-  }
-
-  if (lower.includes('build stopped') || lower.includes('stopped by request')) {
-    clearAlertCondition('lowMaterialHardStop')
-  }
-
-  updateRepeatedPathAlert(message)
+  toastTimer: null
 }
 
 function formatDuration (ms) {
@@ -275,58 +62,10 @@ function formatTime (ts) {
   return new Date(ts).toLocaleTimeString()
 }
 
-function formatAge (ts) {
-  if (!ts) return '--'
-  return `${formatDuration(Date.now() - ts)} ago`
-}
-
 function levelOf (entry) {
-  const rawLevel = String(entry.level || '').toLowerCase()
-  const message = String(entry.message || '').toLowerCase()
-
-  if (rawLevel === 'error' || rawLevel === 'warn' || rawLevel === 'info' || rawLevel === 'action') {
-    return rawLevel
-  }
-
-  const action = String(entry.action || '').toLowerCase()
-  if (CONTROL_ACTIONS.has(action)) return 'action'
-
-  if (message.includes('control action accepted:')) {
-    const acceptedAction = message.split('control action accepted:')[1].trim()
-    if (CONTROL_ACTIONS.has(acceptedAction)) return 'action'
-  }
-
-  if (CONTROL_ACTIONS.has(message)) return 'action'
-
+  const level = String(entry.level || 'info').toLowerCase()
+  if (level === 'error' || level === 'warn' || level === 'info') return level
   return 'info'
-}
-
-function shouldRenderLogEntry (entry) {
-  if (!state.logFilters[entry.level]) return false
-  if (!state.logSearchTerm) return true
-  return entry.message.toLowerCase().includes(state.logSearchTerm)
-}
-
-function createLogLineElement (entry) {
-  const line = document.createElement('p')
-  line.className = `log-line ${entry.level}`
-  line.textContent = `[${new Date(entry.timestamp).toLocaleTimeString()}] [${entry.level.toUpperCase()}] ${entry.message}`
-  return line
-}
-
-function renderLogFeed () {
-  const fragment = document.createDocumentFragment()
-
-  for (const entry of state.logEntries) {
-    if (!shouldRenderLogEntry(entry)) continue
-    fragment.appendChild(createLogLineElement(entry))
-  }
-
-  els.logFeed.replaceChildren(fragment)
-
-  if (state.autoScroll) {
-    els.logFeed.scrollTop = els.logFeed.scrollHeight
-  }
 }
 
 function showToast (message) {
@@ -347,16 +86,13 @@ function showToast (message) {
 function setControlButtonsDisabled (disabled) {
   state.controlsInFlight = disabled
   for (const btn of document.querySelectorAll('[data-action]')) {
-    if (disabled) {
-      btn.dataset.prevLabel = btn.textContent
-      if (state.pendingHoldAction === btn.getAttribute('data-action')) {
-        btn.textContent = '⏳ Sending...'
-      }
-    } else if (btn.dataset.prevLabel) {
-      btn.textContent = btn.dataset.prevLabel
-      delete btn.dataset.prevLabel
-    }
     btn.disabled = disabled
+  }
+}
+
+function trimLogFeedDom () {
+  while (els.logFeed.childElementCount > MAX_LOGS) {
+    els.logFeed.removeChild(els.logFeed.firstElementChild)
   }
 }
 
@@ -364,8 +100,7 @@ function appendLog (entry) {
   const payload = {
     level: levelOf(entry),
     message: String(entry.message || ''),
-    timestamp: entry.timestamp || Date.now(),
-    action: entry.action
+    timestamp: entry.timestamp || Date.now()
   }
 
   state.logEntries.push(payload)
@@ -373,31 +108,19 @@ function appendLog (entry) {
     state.logEntries.shift()
   }
 
-  renderLogFeed()
-}
+  const line = document.createElement('p')
+  line.className = `log-line ${payload.level}`
+  line.textContent = `[${new Date(payload.timestamp).toLocaleTimeString()}] [${payload.level.toUpperCase()}] ${payload.message}`
+  els.logFeed.appendChild(line)
+  trimLogFeedDom()
 
-function formatLookAt (lookAt) {
-  if (!lookAt || typeof lookAt !== 'object') return '--'
-  const name = lookAt.name || 'unknown'
-  const type = lookAt.type || 'target'
-  const pos = lookAt.position
-  if (!pos || typeof pos.x !== 'number' || typeof pos.y !== 'number' || typeof pos.z !== 'number') {
-    return `${type}: ${name}`
+  if (state.autoScroll) {
+    els.logFeed.scrollTop = els.logFeed.scrollHeight
   }
-  return `${type}: ${name} @ ${Math.round(pos.x)},${Math.round(pos.y)},${Math.round(pos.z)}`
-}
-
-function formatMovement (movement) {
-  if (!movement || typeof movement !== 'object') return '--'
-  const onGround = typeof movement.onGround === 'boolean' ? (movement.onGround ? 'yes' : 'no') : '--'
-  const velocityY = typeof movement.velocityY === 'number' ? movement.velocityY.toFixed(3) : '--'
-  const falling = typeof movement.isFalling === 'boolean' ? (movement.isFalling ? 'yes' : 'no') : '--'
-  return `ground=${onGround}, vY=${velocityY}, falling=${falling}`
 }
 
 function renderMaterials (inventory = {}, refill = {}) {
   const thresholds = refill.thresholds || lowThresholdDefaults
-  const lowFlags = refill.low || {}
   const keys = ['sand', 'cactus', 'string', 'cobblestone']
   const fragment = document.createDocumentFragment()
 
@@ -409,11 +132,7 @@ function renderMaterials (inventory = {}, refill = {}) {
     const row = document.createElement('div')
     row.className = 'material-row'
 
-    const isLow = Boolean(lowFlags[key]) || value <= threshold
-    const isEmpty = value <= 0
-    if (isLow) row.classList.add('low-highlight')
-    if (isEmpty) row.classList.add('empty-highlight')
-
+    const isLow = value <= threshold
     row.innerHTML = [
       '<div class="material-head">',
       `<span>${key[0].toUpperCase() + key.slice(1)}</span>`,
@@ -445,68 +164,10 @@ function renderDynamicTimeFields () {
   }
 }
 
-function updateUiStateClasses (connectionState, buildState, refill = {}) {
-  const root = document.documentElement
-  const body = document.body
-  if (!root || !body) return
-
-  const states = ['online', 'reconnecting', 'offline']
-  for (const stateName of states) {
-    const className = `connection-${stateName}`
-    const shouldEnable = connectionState === stateName
-    root.classList.toggle(className, shouldEnable)
-    body.classList.toggle(className, shouldEnable)
-  }
-
-  const normalizedBuildState = String(buildState || '').toLowerCase()
-  const amberMode = normalizedBuildState === 'paused' || normalizedBuildState === 'stopping'
-  root.classList.toggle('app-amber-mode', amberMode)
-  body.classList.toggle('app-amber-mode', amberMode)
-
-  const lowFlags = refill.low || {}
-  const hasLowMaterials = Object.values(lowFlags).some(Boolean)
-  const hasEmptyMaterials = Object.keys(lowFlags).some(key => lowFlags[key] && Number((state.statusSnapshot && state.statusSnapshot.inventory && state.statusSnapshot.inventory[key]) || 0) <= 0)
-  root.classList.toggle('materials-low', hasLowMaterials)
-  body.classList.toggle('materials-low', hasLowMaterials)
-  root.classList.toggle('materials-empty', hasEmptyMaterials)
-  body.classList.toggle('materials-empty', hasEmptyMaterials)
-}
-
 function updateStatus (status) {
   state.statusSnapshot = status
 
-  const previousConnectionState = state.previousConnectionState
   const connectionState = status.connectionState || 'offline'
-
-  if (connectionState === 'offline') {
-    setAlertCondition('disconnected', 'Disconnected from server. Bot operations are paused until reconnection succeeds.')
-    clearAlertCondition('reconnecting')
-  } else if (connectionState === 'reconnecting') {
-    setAlertCondition('reconnecting', 'Reconnecting to server. Monitoring and controls remain available.')
-    clearAlertCondition('disconnected')
-  } else if (connectionState === 'online') {
-    if (previousConnectionState && previousConnectionState !== 'online') {
-      clearAlertCondition('disconnected')
-      clearAlertCondition('reconnecting')
-      clearAlertCondition('sseError')
-      clearAlertCondition('sseWarning')
-    }
-  }
-  state.previousConnectionState = connectionState
-
-  const build = status.build || {}
-  if (!isBuildActive(status)) cancelHoldToConfirm()
-  const buildStatusText = String(build.status || build.state || '').toLowerCase()
-  updateUiStateClasses(connectionState, build.state || build.status, status.refill || {})
-  if (buildStatusText === 'error') {
-    setAlertCondition('sseError', 'Build entered an error state. Review latest errors in the log.', { sticky: true })
-  }
-
-  const refill = status.refill || {}
-  if (refill.needsRefill && connectionState !== 'online') {
-    setAlertCondition('lowMaterialHardStop', 'Low materials plus connection loss detected. Refill and reconnect required before resuming.')
-  }
-
   const connectionCss = ['online', 'reconnecting', 'offline'].includes(connectionState) ? connectionState : 'offline'
   els.connectionBadge.textContent = connectionState.toUpperCase()
   els.connectionBadge.className = `badge ${connectionCss}`
@@ -517,6 +178,7 @@ function updateStatus (status) {
   els.reconnectValue.textContent = `${status.reconnectAttempts || 0}`
   els.uptimeValue.textContent = formatDuration(status.uptimeMs)
 
+  const build = status.build || {}
   const metrics = build.metrics || {}
   const layer = Number(build.layer || 0)
   const layersTotal = Number(build.layersTotal || 0)
@@ -526,7 +188,7 @@ function updateStatus (status) {
   els.layerValue.textContent = `${layer} / ${layersTotal}`
   els.cellValue.textContent = `${cell} / ${cellsTotal}`
   els.buildState.textContent = String(build.status || build.state || 'idle').toUpperCase()
-  els.ppmValue.textContent = `${Math.round(Number(metrics.blocksPerHour || 0))} blocks/hour`
+  els.ppmValue.textContent = Number(metrics.placementsPerMinute || 0).toFixed(1)
   els.etaValue.textContent = formatDuration(metrics.etaMs)
   els.checkpointValue.textContent = `Layer ${layer}, Cell ${cell}`
 
@@ -544,27 +206,10 @@ function updateStatus (status) {
   }
 
   els.dimensionValue.textContent = status.dimension || '--'
-  els.botModeValue.textContent = String(status.botMode || 'idle').toUpperCase()
-  const pauseReason = build.pauseReason || status.pauseReason || '--'
-  const isPausedOrStopping = build.state === 'paused' || build.state === 'stopping' || build.stopRequested
-  if (isPausedOrStopping && pauseReason !== '--') {
-    const badge = document.createElement('span')
-    badge.className = 'badge pause-reason'
-    badge.textContent = pauseReason
-    els.pauseReasonValue.replaceChildren(badge)
-  } else {
-    els.pauseReasonValue.textContent = pauseReason
-  }
-  els.movementValue.textContent = formatMovement(status.movement)
-  els.lookAtValue.textContent = formatLookAt(status.lookAt)
-
-  const lastPlacementAge = formatAge(metrics.lastSuccessfulPlacementAt)
-  const checkpointAge = formatAge(metrics.checkpointSavedAt)
-  els.lastPlacementAgeValue.textContent = lastPlacementAge === '--' ? '--' : `last placement ${lastPlacementAge}`
-  els.checkpointAgeValue.textContent = checkpointAge === '--' ? '--' : `checkpoint age ${checkpointAge}`
 
   renderMaterials(status.inventory || {}, status.refill || {})
 
+  const refill = status.refill || {}
   els.refillStatus.textContent = (refill.needsRefill ? 'NEEDS REFILL' : 'OK')
   const container = refill.lastRefillContainer
   els.refillContainer.textContent = container
@@ -577,15 +222,7 @@ function updateStatus (status) {
 
 async function sendControl (action) {
   if (state.controlsInFlight) return
-
-  const requirement = getConfirmationRequirement(action)
-  if (requirement && requirement.type === 'confirm' && !window.confirm(requirement.message)) {
-    setCommandResult('idle', `Cancelled ${String(action || '').toUpperCase()} command.`)
-    return
-  }
-
   setControlButtonsDisabled(true)
-  setCommandResult('pending', `Sending ${String(action || '').toUpperCase()}...`)
 
   try {
     const result = await fetch('/control', {
@@ -596,32 +233,12 @@ async function sendControl (action) {
 
     const payload = await result.json().catch(() => ({}))
     if (!result.ok || payload.ok === false) {
-      const structuredError = payload && payload.error && payload.error.message
-        ? payload.error.message
-        : payload.error
-      throw new Error(structuredError || `Action failed: ${action}`)
+      throw new Error(payload.error || `Action failed: ${action}`)
     }
 
     state.lastActionAt = Date.now()
-    const actionMessage = payload && payload.message ? payload.message : `Control action accepted: ${action}`
-    appendLog({ level: 'action', action, message: actionMessage, timestamp: Date.now(), data: payload.data || null })
-    setCommandResult('success', `${String(action || '').toUpperCase()}: ${actionMessage}`)
-
-    if (action === 'open_checkpoint' && payload.data && payload.data.checkpoint) {
-      const checkpoint = payload.data.checkpoint
-      const contentSummary = checkpoint.exists
-        ? `Checkpoint file: ${checkpoint.path} (${checkpoint.sizeBytes} bytes)`
-        : `Checkpoint file not found at ${checkpoint.path}`
-      appendLog({ level: 'info', message: contentSummary, timestamp: Date.now() })
-      if (checkpoint.exists && checkpoint.content) {
-        appendLog({ level: 'info', message: `Checkpoint content: ${checkpoint.content}`, timestamp: Date.now() })
-      }
-    }
-
-    showToast(payload && payload.message ? payload.message : `Action sent: ${action.toUpperCase()}`)
-  } catch (err) {
-    setCommandResult('failure', `${String(action || '').toUpperCase()} failed: ${err.message}`)
-    throw err
+    appendLog({ level: 'info', message: `Control action accepted: ${action}`, timestamp: Date.now() })
+    showToast(`Action sent: ${action.toUpperCase()}`)
   } finally {
     setControlButtonsDisabled(false)
   }
@@ -653,68 +270,9 @@ async function copyLastError () {
 }
 
 function setupControls () {
-  const actionButtons = document.querySelectorAll('[data-action]')
-  for (const btn of actionButtons) {
-    const action = btn.getAttribute('data-action')
-
-    if (action === 'stop') {
-      const startHold = () => {
-        const requirement = getConfirmationRequirement(action)
-        if (!requirement || requirement.type !== 'hold') return
-        if (state.controlsInFlight) return
-
-        cancelHoldToConfirm()
-        state.pendingHoldAction = action
-        btn.dataset.prevLabel = btn.textContent
-        btn.textContent = 'Hold…'
-        setCommandResult('pending', requirement.message)
-
-        state.holdStopTimer = setTimeout(() => {
-          state.holdStopTimer = null
-          if (state.pendingHoldAction !== action) return
-          sendControl(action).catch(err => {
-            state.lastError = err.message
-            appendLog({ level: 'error', message: err.message, timestamp: Date.now() })
-            showToast(err.message)
-          }).finally(() => {
-            cancelHoldToConfirm()
-          })
-        }, HOLD_TO_CONFIRM_MS)
-      }
-
-      const cancelHold = (restoreLabel = true) => {
-        if (state.pendingHoldAction !== action) return
-        if (!state.holdStopTimer) return
-        cancelHoldToConfirm()
-        if (restoreLabel && btn.dataset.prevLabel) {
-          btn.textContent = btn.dataset.prevLabel
-          delete btn.dataset.prevLabel
-        }
-        setCommandResult('idle', 'SAFE STOP hold cancelled.')
-      }
-
-      btn.addEventListener('pointerdown', startHold)
-      btn.addEventListener('pointerup', () => cancelHold(true))
-      btn.addEventListener('pointerleave', () => cancelHold(true))
-      btn.addEventListener('pointercancel', () => cancelHold(true))
-      btn.addEventListener('click', async (event) => {
-        const requirement = getConfirmationRequirement(action)
-        if (requirement && requirement.type === 'hold') {
-          event.preventDefault()
-          return
-        }
-        try {
-          await sendControl(action)
-        } catch (err) {
-          state.lastError = err.message
-          appendLog({ level: 'error', message: err.message, timestamp: Date.now() })
-          showToast(err.message)
-        }
-      })
-      continue
-    }
-
+  for (const btn of document.querySelectorAll('[data-action]')) {
     btn.addEventListener('click', async () => {
+      const action = btn.getAttribute('data-action')
       try {
         await sendControl(action)
       } catch (err) {
@@ -732,51 +290,17 @@ function setupControls () {
 
   els.clearLogBtn.addEventListener('click', () => {
     state.logEntries = []
-    renderLogFeed()
+    els.logFeed.replaceChildren()
     showToast('Log cleared.')
   })
 
-  for (const [level, input] of Object.entries({
-    info: els.filterInfo,
-    action: els.filterAction,
-    warn: els.filterWarn,
-    error: els.filterError
-  })) {
-    if (!input) continue
-    input.addEventListener('change', () => {
-      state.logFilters[level] = input.checked
-      renderLogFeed()
-    })
-  }
-
-  if (els.logSearch) {
-    els.logSearch.addEventListener('input', () => {
-      state.logSearchTerm = els.logSearch.value.trim().toLowerCase()
-      renderLogFeed()
-    })
-  }
-
-  if (els.holdStopToggle) {
-    state.holdStopEnabled = els.holdStopToggle.checked
-    els.holdStopToggle.addEventListener('change', () => {
-      state.holdStopEnabled = els.holdStopToggle.checked
-      cancelHoldToConfirm()
-      setCommandResult('idle', state.holdStopEnabled
-        ? 'SAFE STOP now requires hold while build is active.'
-        : 'SAFE STOP hold-to-confirm disabled.')
-    })
-  }
-
   els.exportLogBtn.addEventListener('click', exportLogs)
   els.copyErrorBtn.addEventListener('click', () => copyLastError().catch(() => {}))
-  els.alertBarAck.addEventListener('click', acknowledgeCurrentAlert)
 }
-
 
 function onErrorEvent (payload) {
   state.lastError = payload.message || 'Unknown error'
   appendLog(payload)
-  mapIncomingAlertFromEvent(payload)
   els.errorSound.play().catch(() => {})
 
   if (window.Notification && Notification.permission === 'granted') {
@@ -799,28 +323,16 @@ function setupEventStream () {
 
   stream.addEventListener('status', event => updateStatus(JSON.parse(event.data)))
   stream.addEventListener('log', event => appendLog(JSON.parse(event.data)))
-  stream.addEventListener('warning', event => {
-    const payload = JSON.parse(event.data)
-    appendLog(payload)
-    mapIncomingAlertFromEvent(payload)
-    setAlertCondition('sseWarning', payload.message || 'Warning received from bot.')
-  })
-  stream.addEventListener('error', event => {
-    const payload = JSON.parse(event.data)
-    onErrorEvent(payload)
-    setAlertCondition('sseError', payload.message || 'Error received from bot.', { sticky: true })
-  })
+  stream.addEventListener('warning', event => appendLog(JSON.parse(event.data)))
+  stream.addEventListener('error', event => onErrorEvent(JSON.parse(event.data)))
 
   stream.onerror = () => {
-    const payload = { level: 'warn', message: 'Event stream interrupted. Browser will retry automatically.', timestamp: Date.now() }
-    appendLog(payload)
-    setAlertCondition('reconnecting', 'Live updates interrupted. Browser will retry event stream automatically.')
+    appendLog({ level: 'warn', message: 'Event stream interrupted. Browser will retry automatically.', timestamp: Date.now() })
   }
 }
 
 async function init () {
   setupControls()
-  renderCommandResult()
 
   if (window.Notification && Notification.permission === 'default') {
     Notification.requestPermission().catch(() => {})

@@ -23,6 +23,11 @@ Mineflayer-based Minecraft Java bot that builds chunk-aligned cactus farm layers
   - Slows placement rate when lag is detected.
 - Adds tiny random head movement during work to appear less robotic.
 - Supports opportunistic refill from nearby chest/trapped chest/barrel when materials run low.
+- Recovery features:
+  - On fall detection during active build, requests recovery to last checkpoint instead of immediate fatal stop.
+  - On pathing failure for a cell, retries once using an alternate scaffold approach.
+- Post-placement build verification checks each completed cell and retries once on mismatch.
+- Crash-safe persistence: checkpoints are atomically written after each cell so resumes are precise after restarts/crashes.
 
 ## Quality
 

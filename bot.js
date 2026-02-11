@@ -435,6 +435,22 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     }
   }
 
+
+
+  async function verifyCellPlacement (sandPos, scaffoldOffsetX) {
+    if (isCellCompleted(sandPos, scaffoldOffsetX)) return true
+    await sleepTicks(2)
+    return isCellCompleted(sandPos, scaffoldOffsetX)
+  }
+
+  async function recoverToCheckpointState ({ origin, checkpoint }) {
+    warn(`Recovery: navigating to safe platform and resuming from checkpoint layer=${checkpoint.layer}, cell=${checkpoint.cell}`)
+    await moveToSafePlatform()
+    if (checkpoint.layer < cfg.layers) {
+      await ensureVerticalSpine(origin, checkpoint.layer)
+    }
+  }
+
   async function moveOffScaffoldIfNeeded (scaffoldPos, sandPos, scaffoldOffsetX) {
     if (!bot.entity.position.floored().equals(scaffoldPos)) return
     const candidates = [
@@ -544,7 +560,10 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     bot.on('physicsTick', () => {
       if (isStopping) return
       const y = bot.entity.position.y
-      if (lastY != null && (lastY - y) > 1.01) safeStop(`Fall detected. drop=${(lastY - y).toFixed(2)} blocks`)
+      if (lastY != null && (lastY - y) > 1.01) {
+        const recovered = buildController.requestRecovery(`Fall detected. drop=${(lastY - y).toFixed(2)} blocks`)
+        if (!recovered) safeStop(`Fall detected. drop=${(lastY - y).toFixed(2)} blocks`)
+      }
       lastY = y
     })
   }
@@ -588,6 +607,8 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     buildGridTasks,
     ensureVerticalSpine,
     placeCactusStack,
+    verifyCellPlacement,
+    performRecovery: recoverToCheckpointState,
     onLog: entry => handleLogEntry(entry)
   })
 

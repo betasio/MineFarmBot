@@ -98,80 +98,33 @@ function startUiServer ({ engine, cfg }) {
         }
 
         try {
-          const handlers = {
-            start: async () => {
-              const status = engine.getStatus()
-              const build = status && status.build ? status.build : {}
-              const buildState = String(build.state || build.status || '').toLowerCase()
-              if (['running', 'paused', 'stopping'].includes(buildState) || build.stopRequested) {
-                return { accepted: true, idempotent: true, message: 'Build is already active' }
-              }
-              await engine.startBuild()
-              return { accepted: true, message: 'Build start requested' }
-            },
-            pause: async () => ({ accepted: engine.pauseBuild(), message: 'Pause requested' }),
-            resume: async () => ({ accepted: engine.resumeBuild(), message: 'Resume requested' }),
-            stop: async () => {
-              const status = engine.getStatus()
-              const build = status && status.build ? status.build : {}
-              const buildState = String(build.state || build.status || '').toLowerCase()
-              if (buildState === 'stopping' || build.stopRequested) {
-                return { accepted: true, idempotent: true, message: 'Safe stop already requested' }
-              }
-              if (!['running', 'paused'].includes(buildState)) {
-                return { accepted: true, idempotent: true, message: 'Build is not running; nothing to stop' }
-              }
-              return { accepted: engine.stopBuild(), message: 'Safe stop requested' }
-            },
-            reconnect: async () => {
-              const status = engine.getStatus()
-              if (status && status.reconnectScheduled) {
-                return { accepted: true, idempotent: true, message: 'Reconnect already scheduled' }
-              }
-              return { ...(await engine.reconnectNow()) }
-            },
-            force_refill: async () => ({ ...(await engine.forceRefillNow()) }),
-            return_home: async () => ({ ...(await engine.returnHome()) }),
-            open_checkpoint: async () => ({ ...(await engine.openCheckpoint()) })
-          }
-
-          const handler = handlers[action]
-          if (!handler) {
-            jsonResponse(res, 400, {
-              ok: false,
-              action,
-              error: {
-                code: 'UNSUPPORTED_ACTION',
-                message: `Unsupported action: ${action}`
-              }
-            })
+          if (action === 'start') {
+            await engine.startBuild()
+            jsonResponse(res, 200, { ok: true, action, accepted: true })
             return
           }
 
-          const result = await handler()
-          const accepted = Boolean(result && result.accepted)
-          jsonResponse(res, accepted ? 200 : 409, {
-            ok: accepted,
-            action,
-            accepted,
-            message: result && result.message ? result.message : null,
-            data: result || null,
-            error: accepted
-              ? null
-              : {
-                  code: 'ACTION_REJECTED',
-                  message: (result && result.message) || `Action rejected: ${action}`
-                }
-          })
+          if (action === 'pause') {
+            const accepted = engine.pauseBuild()
+            jsonResponse(res, 200, { ok: accepted, action, accepted })
+            return
+          }
+
+          if (action === 'resume') {
+            const accepted = engine.resumeBuild()
+            jsonResponse(res, 200, { ok: accepted, action, accepted })
+            return
+          }
+
+          if (action === 'stop') {
+            const accepted = engine.stopBuild()
+            jsonResponse(res, 200, { ok: accepted, action, accepted })
+            return
+          }
+
+          jsonResponse(res, 400, { ok: false, error: `Unsupported action: ${action}` })
         } catch (err) {
-          jsonResponse(res, 500, {
-            ok: false,
-            action,
-            error: {
-              code: 'ACTION_FAILED',
-              message: err.message
-            }
-          })
+          jsonResponse(res, 500, { ok: false, error: err.message })
         }
       })
 
