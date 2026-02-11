@@ -250,6 +250,57 @@ function startUiServer ({ engine, cfg }) {
         })
         fs.createReadStream(fullPath).pipe(res)
       })
+
+      req.on('end', async () => {
+        let payload
+        try {
+          payload = body ? JSON.parse(body) : {}
+        } catch {
+          jsonResponse(res, 400, { ok: false, error: 'Invalid JSON payload' })
+          return
+        }
+
+        const action = String(payload.action || '').toLowerCase()
+        if (!action) {
+          jsonResponse(res, 400, { ok: false, error: 'Missing action' })
+          return
+        }
+
+        try {
+          if (action === 'start') {
+            await engine.startBuild()
+            jsonResponse(res, 200, { ok: true, action, accepted: true })
+            return
+          }
+
+          if (action === 'pause') {
+            const accepted = engine.pauseBuild()
+            jsonResponse(res, 200, { ok: accepted, action, accepted })
+            return
+          }
+
+          if (action === 'resume') {
+            const accepted = engine.resumeBuild()
+            jsonResponse(res, 200, { ok: accepted, action, accepted })
+            return
+          }
+
+          if (action === 'stop') {
+            const accepted = engine.stopBuild()
+            jsonResponse(res, 200, { ok: accepted, action, accepted })
+            return
+          }
+
+          jsonResponse(res, 400, { ok: false, error: `Unsupported action: ${action}` })
+        } catch (err) {
+          jsonResponse(res, 500, { ok: false, error: err.message })
+        }
+      })
+
+      req.on('error', () => {
+        if (!res.headersSent) jsonResponse(res, 400, { ok: false, error: 'Failed to read request body' })
+      })
+
       return
     }
 
