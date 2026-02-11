@@ -41,7 +41,12 @@ const els = {
   pauseScrollBtn: document.getElementById('pause-scroll-btn'),
   clearLogBtn: document.getElementById('clear-log-btn'),
   exportLogBtn: document.getElementById('export-log-btn'),
-  copyErrorBtn: document.getElementById('copy-error-btn')
+  copyErrorBtn: document.getElementById('copy-error-btn'),
+  filterInfo: document.getElementById('filter-info'),
+  filterAction: document.getElementById('filter-action'),
+  filterWarn: document.getElementById('filter-warn'),
+  filterError: document.getElementById('filter-error'),
+  logSearch: document.getElementById('log-search')
 }
 
 const state = {
@@ -66,9 +71,17 @@ const state = {
   previousConnectionState: null,
   pathErrorWindowMs: 4 * 60 * 1000,
   pathErrorTimestamps: [],
-  repeatedPathThreshold: 3
+  repeatedPathThreshold: 3,
+  logFilters: {
+    info: true,
+    action: true,
+    warn: true,
+    error: true
+  },
+  logSearchTerm: ''
 }
 
+const CONTROL_ACTIONS = new Set(['start', 'pause', 'resume', 'stop', 'refill'])
 
 
 function buildAlertCondition (key, message, overrides = {}) {
@@ -196,9 +209,52 @@ function formatAge (ts) {
 }
 
 function levelOf (entry) {
-  const level = String(entry.level || 'info').toLowerCase()
-  if (level === 'error' || level === 'warn' || level === 'info') return level
+  const rawLevel = String(entry.level || '').toLowerCase()
+  const message = String(entry.message || '').toLowerCase()
+
+  if (rawLevel === 'error' || rawLevel === 'warn' || rawLevel === 'info' || rawLevel === 'action') {
+    return rawLevel
+  }
+
+  const action = String(entry.action || '').toLowerCase()
+  if (CONTROL_ACTIONS.has(action)) return 'action'
+
+  if (message.includes('control action accepted:')) {
+    const acceptedAction = message.split('control action accepted:')[1].trim()
+    if (CONTROL_ACTIONS.has(acceptedAction)) return 'action'
+  }
+
+  if (CONTROL_ACTIONS.has(message)) return 'action'
+
   return 'info'
+}
+
+function shouldRenderLogEntry (entry) {
+  if (!state.logFilters[entry.level]) return false
+  if (!state.logSearchTerm) return true
+  return entry.message.toLowerCase().includes(state.logSearchTerm)
+}
+
+function createLogLineElement (entry) {
+  const line = document.createElement('p')
+  line.className = `log-line ${entry.level}`
+  line.textContent = `[${new Date(entry.timestamp).toLocaleTimeString()}] [${entry.level.toUpperCase()}] ${entry.message}`
+  return line
+}
+
+function renderLogFeed () {
+  const fragment = document.createDocumentFragment()
+
+  for (const entry of state.logEntries) {
+    if (!shouldRenderLogEntry(entry)) continue
+    fragment.appendChild(createLogLineElement(entry))
+  }
+
+  els.logFeed.replaceChildren(fragment)
+
+  if (state.autoScroll) {
+    els.logFeed.scrollTop = els.logFeed.scrollHeight
+  }
 }
 
 function showToast (message) {
@@ -223,17 +279,12 @@ function setControlButtonsDisabled (disabled) {
   }
 }
 
-function trimLogFeedDom () {
-  while (els.logFeed.childElementCount > MAX_LOGS) {
-    els.logFeed.removeChild(els.logFeed.firstElementChild)
-  }
-}
-
 function appendLog (entry) {
   const payload = {
     level: levelOf(entry),
     message: String(entry.message || ''),
-    timestamp: entry.timestamp || Date.now()
+    timestamp: entry.timestamp || Date.now(),
+    action: entry.action
   }
 
   state.logEntries.push(payload)
@@ -241,15 +292,7 @@ function appendLog (entry) {
     state.logEntries.shift()
   }
 
-  const line = document.createElement('p')
-  line.className = `log-line ${payload.level}`
-  line.textContent = `[${new Date(payload.timestamp).toLocaleTimeString()}] [${payload.level.toUpperCase()}] ${payload.message}`
-  els.logFeed.appendChild(line)
-  trimLogFeedDom()
-
-  if (state.autoScroll) {
-    els.logFeed.scrollTop = els.logFeed.scrollHeight
-  }
+  renderLogFeed()
 }
 
 function formatLookAt (lookAt) {
@@ -434,7 +477,7 @@ async function sendControl (action) {
     }
 
     state.lastActionAt = Date.now()
-    appendLog({ level: 'info', message: `Control action accepted: ${action}`, timestamp: Date.now() })
+    appendLog({ level: 'action', action, message: `Control action accepted: ${action}`, timestamp: Date.now() })
     showToast(`Action sent: ${action.toUpperCase()}`)
   } finally {
     setControlButtonsDisabled(false)
@@ -487,9 +530,29 @@ function setupControls () {
 
   els.clearLogBtn.addEventListener('click', () => {
     state.logEntries = []
-    els.logFeed.replaceChildren()
+    renderLogFeed()
     showToast('Log cleared.')
   })
+
+  for (const [level, input] of Object.entries({
+    info: els.filterInfo,
+    action: els.filterAction,
+    warn: els.filterWarn,
+    error: els.filterError
+  })) {
+    if (!input) continue
+    input.addEventListener('change', () => {
+      state.logFilters[level] = input.checked
+      renderLogFeed()
+    })
+  }
+
+  if (els.logSearch) {
+    els.logSearch.addEventListener('input', () => {
+      state.logSearchTerm = els.logSearch.value.trim().toLowerCase()
+      renderLogFeed()
+    })
+  }
 
   els.exportLogBtn.addEventListener('click', exportLogs)
   els.copyErrorBtn.addEventListener('click', () => copyLastError().catch(() => {}))

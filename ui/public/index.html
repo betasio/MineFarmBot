@@ -82,6 +82,16 @@
             <button id="export-log-btn">Export</button>
           </div>
         </div>
+        <div class="log-filters" aria-label="Log filters">
+          <label><input id="filter-info" type="checkbox" checked /> INFO</label>
+          <label><input id="filter-action" type="checkbox" checked /> ACTION</label>
+          <label><input id="filter-warn" type="checkbox" checked /> WARN</label>
+          <label><input id="filter-error" type="checkbox" checked /> ERROR</label>
+          <label class="search-filter">
+            <span>Search</span>
+            <input id="log-search" type="search" placeholder="filter log text" />
+          </label>
+        </div>
         <div id="log-feed" class="log-feed"></div>
       </section>
 

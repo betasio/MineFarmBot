@@ -8,6 +8,7 @@
   --danger: #f76969;
   --warn: #f3cb5d;
   --ok: #42d090;
+  --action: #7ee0ff;
   --accent: #4a92ff;
   --border: #29405d;
   --shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
@@ -216,6 +217,34 @@ hr {
   flex-wrap: wrap;
 }
 
+.log-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.log-filters label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.log-filters input[type='checkbox'] {
+  accent-color: var(--accent);
+}
+
+.search-filter {
+  margin-left: auto;
+}
+
+.search-filter input {
+  min-width: 200px;
+}
+
 .log-feed {
   margin-top: 8px;
   background: #0b1018;
@@ -239,6 +268,10 @@ hr {
 
 .log-line.warn {
   color: var(--warn);
+}
+
+.log-line.action {
+  color: var(--action);
 }
 
 .log-line.error {
@@ -382,6 +415,16 @@ button {
 
   .cards-row {
     grid-template-columns: 1fr;
+  }
+
+  .search-filter {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .search-filter input {
+    min-width: 0;
+    width: 100%;
   }
 
   .log-feed {
