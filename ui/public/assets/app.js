@@ -38,7 +38,10 @@ const els = {
   reloadConfigBtn: document.getElementById('reload-config-btn'),
   configForm: document.getElementById('config-form'),
   configMessage: document.getElementById('config-message'),
-  configRequiredAlert: document.getElementById('config-required-alert')
+  configRequiredAlert: document.getElementById('config-required-alert'),
+  authTypeSelect: document.getElementById('auth-type-select'),
+  microsoftEmailGroup: document.getElementById('microsoft-email-group'),
+  offlineUsernameGroup: document.getElementById('offline-username-group')
 }
 
 const state = {
@@ -102,6 +105,24 @@ function getByPath (obj, path) {
   return path.split('.').reduce((acc, key) => (acc && Object.prototype.hasOwnProperty.call(acc, key) ? acc[key] : undefined), obj)
 }
 
+
+function getAuthTypeFromForm () {
+  const raw = String((els.authTypeSelect && els.authTypeSelect.value) || 'microsoft').toLowerCase()
+  return raw === 'offline' ? 'offline' : 'microsoft'
+}
+
+function getAuthRequiredFields () {
+  return getAuthTypeFromForm() === 'offline'
+    ? ['offlineUsername']
+    : ['microsoftEmail']
+}
+
+function applyAuthVisibility () {
+  const authType = getAuthTypeFromForm()
+  els.microsoftEmailGroup.classList.toggle('hidden', authType !== 'microsoft')
+  els.offlineUsernameGroup.classList.toggle('hidden', authType !== 'offline')
+}
+
 function updateConfigHealthBanner () {
   if (!els.configRequiredAlert) return
   const missing = state.missingRequiredFields
@@ -122,9 +143,16 @@ function updateStartButtonEnabled () {
 
 function validateRequiredInForm () {
   const missing = []
-  for (const field of state.configRequiredFields) {
+  const requiredFields = [...state.configRequiredFields, ...getAuthRequiredFields()]
+  const uniqueFields = [...new Set(requiredFields)]
+
+  for (const field of uniqueFields) {
     const input = els.configForm.querySelector(`[name="${CSS.escape(field)}"]`)
     if (!input) continue
+    if (input.closest('.hidden')) {
+      input.classList.remove('field-invalid')
+      continue
+    }
     const value = input.type === 'checkbox' ? input.checked : input.value.trim()
     const invalid = value === '' || value == null
     input.classList.toggle('field-invalid', invalid)
@@ -134,25 +162,40 @@ function validateRequiredInForm () {
 }
 
 function markRequiredConfigFields () {
-  for (const input of els.configForm.querySelectorAll('input[name]')) {
-    const required = state.configRequiredFields.includes(input.name)
-    if (required) input.required = true
+  const requiredSet = new Set([...state.configRequiredFields, ...getAuthRequiredFields()])
+  for (const input of els.configForm.querySelectorAll('[name]')) {
+    const required = requiredSet.has(input.name)
+    input.required = required
     input.parentElement.classList.toggle('required-field', required)
   }
 }
 
 function fillConfigForm (cfg) {
-  for (const input of els.configForm.querySelectorAll('input[name]')) {
+  const authType = String(cfg.auth || 'microsoft').toLowerCase() === 'offline' ? 'offline' : 'microsoft'
+  if (els.authTypeSelect) els.authTypeSelect.value = authType
+  applyAuthVisibility()
+
+  for (const input of els.configForm.querySelectorAll('[name]')) {
+    if (input.name === 'microsoftEmail' || input.name === 'offlineUsername') continue
     const value = getByPath(cfg, input.name)
     if (input.type === 'checkbox') input.checked = Boolean(value)
     else input.value = value == null ? '' : String(value)
     input.classList.remove('field-invalid')
   }
+
+  const username = String(cfg.username || '')
+  const msInput = els.configForm.querySelector('[name="microsoftEmail"]')
+  const offlineInput = els.configForm.querySelector('[name="offlineUsername"]')
+  if (msInput) msInput.value = authType === 'microsoft' ? username : ''
+  if (offlineInput) offlineInput.value = authType === 'offline' ? username : ''
 }
 
 function collectConfigFromForm () {
   const payload = {}
-  for (const input of els.configForm.querySelectorAll('input[name]')) {
+  const authType = getAuthTypeFromForm()
+
+  for (const input of els.configForm.querySelectorAll('[name]')) {
+    if (input.name === 'microsoftEmail' || input.name === 'offlineUsername') continue
     let value
     if (input.type === 'checkbox') value = input.checked
     else if (input.type === 'number') value = input.value === '' ? null : Number(input.value)
@@ -160,6 +203,14 @@ function collectConfigFromForm () {
     if (value === '' || Number.isNaN(value)) continue
     setByPath(payload, input.name, value)
   }
+
+  const usernameValue = authType === 'offline'
+    ? (els.configForm.querySelector('[name="offlineUsername"]')?.value || '').trim()
+    : (els.configForm.querySelector('[name="microsoftEmail"]')?.value || '').trim()
+
+  if (usernameValue) payload.username = usernameValue
+  payload.auth = authType
+
   return payload
 }
 
@@ -167,14 +218,14 @@ async function loadConfigForm () {
   const data = await fetch('/config', { cache: 'no-store' }).then(r => r.json())
   if (!data.ok) throw new Error(data.error || 'Failed to load config')
   state.configRequiredFields = Array.isArray(data.requiredFields) ? data.requiredFields : []
-  state.missingRequiredFields = Array.isArray(data.missingRequiredFields) ? data.missingRequiredFields : []
   fillConfigForm(data.config || {})
   markRequiredConfigFields()
-  validateRequiredInForm()
+  const requiredMissing = validateRequiredInForm()
+  state.missingRequiredFields = requiredMissing
   updateConfigHealthBanner()
   updateStartButtonEnabled()
-  els.configMessage.textContent = state.missingRequiredFields.length > 0
-    ? `Missing required fields: ${state.missingRequiredFields.join(', ')}`
+  els.configMessage.textContent = requiredMissing.length > 0
+    ? `Missing required fields: ${requiredMissing.join(', ')}`
     : 'Loaded current configuration.'
 }
 
@@ -207,7 +258,7 @@ async function saveConfigForm () {
   state.missingRequiredFields = Array.isArray(body.missingRequiredFields) ? body.missingRequiredFields : []
   fillConfigForm(body.config || {})
   markRequiredConfigFields()
-  validateRequiredInForm()
+  state.missingRequiredFields = validateRequiredInForm()
   updateConfigHealthBanner()
   updateStartButtonEnabled()
   els.configMessage.textContent = body.message || 'Saved.'
@@ -409,8 +460,23 @@ function setupControls () {
     })
   })
 
+  els.authTypeSelect.addEventListener('change', () => {
+    applyAuthVisibility()
+    markRequiredConfigFields()
+    const missing = validateRequiredInForm()
+    state.missingRequiredFields = missing
+    updateConfigHealthBanner()
+    updateStartButtonEnabled()
+    els.configMessage.textContent = missing.length > 0
+      ? `Missing required fields: ${missing.join(', ')}`
+      : 'All required fields are present.'
+  })
+
   els.configForm.addEventListener('input', () => {
     const missing = validateRequiredInForm()
+    state.missingRequiredFields = missing
+    updateConfigHealthBanner()
+    updateStartButtonEnabled()
     els.configMessage.textContent = missing.length > 0
       ? `Missing required fields: ${missing.join(', ')}`
       : 'All required fields are present.'

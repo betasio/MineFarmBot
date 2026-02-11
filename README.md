@@ -76,6 +76,11 @@ The bot now exposes a lightweight GUI transport (HTTP + SSE) for a browser-based
 
 Setup Wizard validates required fields before run and prevents Start while mandatory configuration is missing.
 
+Auth Type selector behavior:
+- `microsoft` → shows **Microsoft Email** (stored internally as `config.username`).
+- `offline` → shows **Offline Username** (stored internally as `config.username`).
+- Password is intentionally removed from Setup Wizard for simpler onboarding.
+
 
 - **Start**: begins the build from the configured `origin` and initializes progress tracking.
 - **Pause**: halts work at the next safe checkpoint without logging out.
@@ -120,7 +125,7 @@ Progress checkpoints are written every 16 placements to `build-checkpoint.json` 
 
 `config.json` fields:
 
-- `host`, `port`, `username`, `password`, `auth`, `version` (`auth` default is `microsoft`)
+- `host`, `port`, `username`, `auth`, `version` (`auth` default is `microsoft`)
 - `layers` (number of layers, recommended 15–20)
 - `buildDelayTicks` (base delay between placements)
 - `removeScaffold` (`true`/`false`, default `false` for safer high-layer runs)

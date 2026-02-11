@@ -91,9 +91,14 @@
           <div class="config-grid">
             <label>Server Host * Required<input name="host" required /></label>
             <label>Server Port * Required<input name="port" type="number" min="1" required /></label>
-            <label>Username * Required<input name="username" required /></label>
-            <label>Password<input name="password" /></label>
-            <label>Auth<input name="auth" /></label>
+            <label>Auth Type * Required
+              <select name="auth" id="auth-type-select">
+                <option value="microsoft">microsoft</option>
+                <option value="offline">offline</option>
+              </select>
+            </label>
+            <label id="microsoft-email-group">Microsoft Email * Required<input name="microsoftEmail" type="email" /></label>
+            <label id="offline-username-group">Offline Username * Required<input name="offlineUsername" /></label>
             <label>Version<input name="version" /></label>
           </div>
         </section>

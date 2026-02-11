@@ -403,3 +403,15 @@ button {
   border-color: #f76969 !important;
   box-shadow: 0 0 0 1px rgba(247, 105, 105, 0.25);
 }
+
+.config-grid select {
+  background: #0d1521;
+  border: 1px solid #385074;
+  border-radius: 8px;
+  color: var(--text);
+  padding: 8px 10px;
+}
+
+.hidden {
+  display: none !important;
+}

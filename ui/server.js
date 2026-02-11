@@ -10,7 +10,7 @@ const SSE_HEARTBEAT_MS = 15000
 const REQUIRED_CONFIG_FIELDS = [
   'host',
   'port',
-  'username',
+  'auth',
   'origin.x',
   'origin.y',
   'origin.z',
@@ -41,7 +41,13 @@ function getMissingRequiredFields (config) {
     const value = getByPath(config, field)
     if (value == null || value === '' || (typeof value === 'number' && Number.isNaN(value))) missing.push(field)
   }
-  return missing
+
+  const auth = String(config.auth || 'microsoft').toLowerCase()
+  if (!config.username || String(config.username).trim().length === 0) {
+    missing.push(auth === 'offline' ? 'offlineUsername' : 'microsoftEmail')
+  }
+
+  return [...new Set(missing)]
 }
 
 function guessContentType (filePath) {
