@@ -167,6 +167,12 @@ hr {
   color: var(--danger);
 }
 
+.badge.pause-reason {
+  background: color-mix(in srgb, var(--warn) 22%, transparent);
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 50%, #4a6586);
+}
+
 .metric {
   display: flex;
   justify-content: space-between;

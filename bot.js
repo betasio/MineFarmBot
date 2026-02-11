@@ -179,10 +179,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
 
   function getPauseReason (build, refill) {
     if (reconnectScheduled) return null
-    if (!build) return null
-
-    if (build.state === 'paused') return 'build paused by controller'
-    if (build.state === 'stopping' || build.stopRequested) return 'stopping at next safe checkpoint'
+    if (build && build.pauseReason) return build.pauseReason
     if (refill && refill.needsRefill) return 'materials low; waiting for refill'
     return null
   }
