@@ -435,6 +435,55 @@ button {
   cursor: pointer;
 }
 
+
+.control-meta {
+  margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 260px;
+}
+
+.hold-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.hold-toggle input[type='checkbox'] {
+  accent-color: var(--accent);
+}
+
+.command-result {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--card) 75%, #0b111a);
+  font-size: 13px;
+}
+
+.command-result.idle {
+  color: var(--muted);
+}
+
+.command-result.pending {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--border));
+}
+
+.command-result.success {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 45%, var(--border));
+}
+
+.command-result.failure {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 55%, var(--border));
+}
+
 .global-alert {
   position: fixed;
   top: 14px;
@@ -500,4 +549,10 @@ button {
   .controls {
     justify-content: flex-start;
   }
+
+  .control-meta {
+    margin-left: 0;
+    width: 100%;
+  }
 }
+

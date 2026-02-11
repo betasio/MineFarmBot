@@ -46,7 +46,9 @@ const els = {
   filterAction: document.getElementById('filter-action'),
   filterWarn: document.getElementById('filter-warn'),
   filterError: document.getElementById('filter-error'),
-  logSearch: document.getElementById('log-search')
+  logSearch: document.getElementById('log-search'),
+  holdStopToggle: document.getElementById('hold-stop-toggle'),
+  commandResult: document.getElementById('command-result')
 }
 
 const state = {
@@ -78,10 +80,80 @@ const state = {
     warn: true,
     error: true
   },
-  logSearchTerm: ''
+  logSearchTerm: '',
+  holdStopEnabled: true,
+  holdStopTimer: null,
+  pendingHoldAction: null,
+  commandResult: { state: 'idle', message: 'No command sent yet.' }
 }
 
 const CONTROL_ACTIONS = new Set(['start', 'pause', 'resume', 'stop', 'reconnect', 'force_refill', 'return_home', 'open_checkpoint'])
+
+const HOLD_TO_CONFIRM_MS = 900
+const COMMAND_RESULT_STATES = new Set(['idle', 'pending', 'success', 'failure'])
+
+function isBuildActive (snapshot = state.statusSnapshot) {
+  const build = (snapshot && snapshot.build) || {}
+  const buildState = String(build.state || build.status || '').toLowerCase()
+  return buildState === 'running' || buildState === 'paused' || buildState === 'stopping' || Boolean(build.stopRequested)
+}
+
+function getConfirmationRequirement (action) {
+  const status = state.statusSnapshot || {}
+  const buildActive = isBuildActive(status)
+
+  if (action === 'start' && buildActive) {
+    return {
+      type: 'confirm',
+      message: 'Build is already active. Send START anyway?'
+    }
+  }
+
+  if (action === 'stop' && buildActive) {
+    return state.holdStopEnabled
+      ? {
+          type: 'hold',
+          message: `Hold SAFE STOP for ${Math.round(HOLD_TO_CONFIRM_MS / 100) / 10}s to confirm.`
+        }
+      : {
+          type: 'confirm',
+          message: 'SAFE STOP will halt the active build at the next safe checkpoint. Continue?'
+        }
+  }
+
+  if (action === 'reconnect' && buildActive) {
+    return {
+      type: 'confirm',
+      message: 'Reconnect during active build can interrupt placement. Continue?'
+    }
+  }
+
+  return null
+}
+
+function renderCommandResult () {
+  if (!els.commandResult) return
+  const info = state.commandResult || { state: 'idle', message: 'No command sent yet.' }
+  const resultState = COMMAND_RESULT_STATES.has(info.state) ? info.state : 'idle'
+  els.commandResult.className = `command-result ${resultState}`
+  els.commandResult.textContent = info.message || 'No command sent yet.'
+}
+
+function setCommandResult (resultState, message) {
+  state.commandResult = {
+    state: COMMAND_RESULT_STATES.has(resultState) ? resultState : 'idle',
+    message: String(message || '').trim() || 'No command sent yet.'
+  }
+  renderCommandResult()
+}
+
+function cancelHoldToConfirm () {
+  if (state.holdStopTimer) {
+    clearTimeout(state.holdStopTimer)
+    state.holdStopTimer = null
+  }
+  state.pendingHoldAction = null
+}
 
 
 function buildAlertCondition (key, message, overrides = {}) {
@@ -275,6 +347,15 @@ function showToast (message) {
 function setControlButtonsDisabled (disabled) {
   state.controlsInFlight = disabled
   for (const btn of document.querySelectorAll('[data-action]')) {
+    if (disabled) {
+      btn.dataset.prevLabel = btn.textContent
+      if (state.pendingHoldAction === btn.getAttribute('data-action')) {
+        btn.textContent = '⏳ Sending...'
+      }
+    } else if (btn.dataset.prevLabel) {
+      btn.textContent = btn.dataset.prevLabel
+      delete btn.dataset.prevLabel
+    }
     btn.disabled = disabled
   }
 }
@@ -414,6 +495,7 @@ function updateStatus (status) {
   state.previousConnectionState = connectionState
 
   const build = status.build || {}
+  if (!isBuildActive(status)) cancelHoldToConfirm()
   const buildStatusText = String(build.status || build.state || '').toLowerCase()
   updateUiStateClasses(connectionState, build.state || build.status, status.refill || {})
   if (buildStatusText === 'error') {
@@ -495,7 +577,15 @@ function updateStatus (status) {
 
 async function sendControl (action) {
   if (state.controlsInFlight) return
+
+  const requirement = getConfirmationRequirement(action)
+  if (requirement && requirement.type === 'confirm' && !window.confirm(requirement.message)) {
+    setCommandResult('idle', `Cancelled ${String(action || '').toUpperCase()} command.`)
+    return
+  }
+
   setControlButtonsDisabled(true)
+  setCommandResult('pending', `Sending ${String(action || '').toUpperCase()}...`)
 
   try {
     const result = await fetch('/control', {
@@ -515,6 +605,7 @@ async function sendControl (action) {
     state.lastActionAt = Date.now()
     const actionMessage = payload && payload.message ? payload.message : `Control action accepted: ${action}`
     appendLog({ level: 'action', action, message: actionMessage, timestamp: Date.now(), data: payload.data || null })
+    setCommandResult('success', `${String(action || '').toUpperCase()}: ${actionMessage}`)
 
     if (action === 'open_checkpoint' && payload.data && payload.data.checkpoint) {
       const checkpoint = payload.data.checkpoint
@@ -528,6 +619,9 @@ async function sendControl (action) {
     }
 
     showToast(payload && payload.message ? payload.message : `Action sent: ${action.toUpperCase()}`)
+  } catch (err) {
+    setCommandResult('failure', `${String(action || '').toUpperCase()} failed: ${err.message}`)
+    throw err
   } finally {
     setControlButtonsDisabled(false)
   }
@@ -559,9 +653,68 @@ async function copyLastError () {
 }
 
 function setupControls () {
-  for (const btn of document.querySelectorAll('[data-action]')) {
+  const actionButtons = document.querySelectorAll('[data-action]')
+  for (const btn of actionButtons) {
+    const action = btn.getAttribute('data-action')
+
+    if (action === 'stop') {
+      const startHold = () => {
+        const requirement = getConfirmationRequirement(action)
+        if (!requirement || requirement.type !== 'hold') return
+        if (state.controlsInFlight) return
+
+        cancelHoldToConfirm()
+        state.pendingHoldAction = action
+        btn.dataset.prevLabel = btn.textContent
+        btn.textContent = 'Hold…'
+        setCommandResult('pending', requirement.message)
+
+        state.holdStopTimer = setTimeout(() => {
+          state.holdStopTimer = null
+          if (state.pendingHoldAction !== action) return
+          sendControl(action).catch(err => {
+            state.lastError = err.message
+            appendLog({ level: 'error', message: err.message, timestamp: Date.now() })
+            showToast(err.message)
+          }).finally(() => {
+            cancelHoldToConfirm()
+          })
+        }, HOLD_TO_CONFIRM_MS)
+      }
+
+      const cancelHold = (restoreLabel = true) => {
+        if (state.pendingHoldAction !== action) return
+        if (!state.holdStopTimer) return
+        cancelHoldToConfirm()
+        if (restoreLabel && btn.dataset.prevLabel) {
+          btn.textContent = btn.dataset.prevLabel
+          delete btn.dataset.prevLabel
+        }
+        setCommandResult('idle', 'SAFE STOP hold cancelled.')
+      }
+
+      btn.addEventListener('pointerdown', startHold)
+      btn.addEventListener('pointerup', () => cancelHold(true))
+      btn.addEventListener('pointerleave', () => cancelHold(true))
+      btn.addEventListener('pointercancel', () => cancelHold(true))
+      btn.addEventListener('click', async (event) => {
+        const requirement = getConfirmationRequirement(action)
+        if (requirement && requirement.type === 'hold') {
+          event.preventDefault()
+          return
+        }
+        try {
+          await sendControl(action)
+        } catch (err) {
+          state.lastError = err.message
+          appendLog({ level: 'error', message: err.message, timestamp: Date.now() })
+          showToast(err.message)
+        }
+      })
+      continue
+    }
+
     btn.addEventListener('click', async () => {
-      const action = btn.getAttribute('data-action')
       try {
         await sendControl(action)
       } catch (err) {
@@ -600,6 +753,17 @@ function setupControls () {
     els.logSearch.addEventListener('input', () => {
       state.logSearchTerm = els.logSearch.value.trim().toLowerCase()
       renderLogFeed()
+    })
+  }
+
+  if (els.holdStopToggle) {
+    state.holdStopEnabled = els.holdStopToggle.checked
+    els.holdStopToggle.addEventListener('change', () => {
+      state.holdStopEnabled = els.holdStopToggle.checked
+      cancelHoldToConfirm()
+      setCommandResult('idle', state.holdStopEnabled
+        ? 'SAFE STOP now requires hold while build is active.'
+        : 'SAFE STOP hold-to-confirm disabled.')
     })
   }
 
@@ -656,6 +820,7 @@ function setupEventStream () {
 
 async function init () {
   setupControls()
+  renderCommandResult()
 
   if (window.Notification && Notification.permission === 'default') {
     Notification.requestPermission().catch(() => {})
