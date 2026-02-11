@@ -6,6 +6,10 @@ const lowThresholdDefaults = { sand: 64, cactus: 64, string: 64, cobblestone: 12
 const els = {
   toast: document.getElementById('toast'),
   serverMeta: document.getElementById('server-meta'),
+  alertBar: document.getElementById('alert-bar'),
+  alertBarTitle: document.getElementById('alert-bar-title'),
+  alertBarMessage: document.getElementById('alert-bar-message'),
+  alertBarAck: document.getElementById('alert-bar-ack'),
   connectionBadge: document.getElementById('connection-badge'),
   pingValue: document.getElementById('ping-value'),
   lagValue: document.getElementById('lag-value'),
@@ -43,7 +47,125 @@ const state = {
   updateTicker: null,
   eventStream: null,
   controlsInFlight: false,
-  toastTimer: null
+  toastTimer: null,
+  alertConditions: {},
+  conditionMeta: {
+    disconnected: { severity: 'error', priority: 100, sticky: true },
+    reconnecting: { severity: 'warning', priority: 80 },
+    lowMaterialHardStop: { severity: 'error', priority: 90, sticky: true },
+    repeatedPathErrors: { severity: 'warning', priority: 70 },
+    sseWarning: { severity: 'warning', priority: 60 },
+    sseError: { severity: 'error', priority: 95, sticky: true }
+  },
+  previousConnectionState: null,
+  pathErrorWindowMs: 4 * 60 * 1000,
+  pathErrorTimestamps: [],
+  repeatedPathThreshold: 3
+}
+
+
+
+function buildAlertCondition (key, message, overrides = {}) {
+  const base = state.conditionMeta[key] || {}
+  return {
+    key,
+    message,
+    severity: overrides.severity || base.severity || 'info',
+    priority: overrides.priority ?? base.priority ?? 10,
+    sticky: overrides.sticky ?? Boolean(base.sticky),
+    acknowledged: false
+  }
+}
+
+function setAlertCondition (key, message, overrides = {}) {
+  state.alertConditions[key] = buildAlertCondition(key, message, overrides)
+  renderAlertBar()
+}
+
+function clearAlertCondition (key) {
+  if (!state.alertConditions[key]) return
+  delete state.alertConditions[key]
+  renderAlertBar()
+}
+
+function acknowledgeCurrentAlert () {
+  const active = getHighestPriorityAlert()
+  if (!active) return
+  if (!active.sticky) {
+    clearAlertCondition(active.key)
+    return
+  }
+
+  state.alertConditions[active.key] = { ...active, acknowledged: true }
+  renderAlertBar()
+}
+
+function getHighestPriorityAlert () {
+  const active = Object.values(state.alertConditions).filter(item => item && (!item.sticky || !item.acknowledged))
+  if (active.length === 0) return null
+
+  active.sort((a, b) => {
+    if (a.priority !== b.priority) return b.priority - a.priority
+    const rank = { error: 3, warning: 2, info: 1 }
+    return (rank[b.severity] || 0) - (rank[a.severity] || 0)
+  })
+
+  return active[0]
+}
+
+function renderAlertBar () {
+  if (!els.alertBar || !els.alertBarMessage || !els.alertBarTitle || !els.alertBarAck) return
+
+  const active = getHighestPriorityAlert()
+  if (!active) {
+    els.alertBar.className = 'alert-bar hidden'
+    els.alertBarTitle.textContent = 'Info'
+    els.alertBarMessage.textContent = ''
+    els.alertBarAck.classList.add('hidden')
+    return
+  }
+
+  els.alertBar.className = `alert-bar ${active.severity}`
+  els.alertBarTitle.textContent = active.severity.toUpperCase()
+  els.alertBarMessage.textContent = active.message
+  if (active.sticky) {
+    els.alertBarAck.classList.remove('hidden')
+    els.alertBarAck.textContent = 'Acknowledge'
+  } else {
+    els.alertBarAck.classList.add('hidden')
+  }
+}
+
+function shouldTrackPathError (message) {
+  const text = String(message || '').toLowerCase()
+  return text.includes('path') || text.includes('goal') || text.includes('stuck')
+}
+
+function updateRepeatedPathAlert (message) {
+  if (!shouldTrackPathError(message)) return
+
+  const now = Date.now()
+  state.pathErrorTimestamps = state.pathErrorTimestamps.filter(ts => (now - ts) <= state.pathErrorWindowMs)
+  state.pathErrorTimestamps.push(now)
+
+  if (state.pathErrorTimestamps.length >= state.repeatedPathThreshold) {
+    setAlertCondition('repeatedPathErrors', 'Repeated pathing failures detected. Check for obstructions and bot footing.')
+  }
+}
+
+function mapIncomingAlertFromEvent (payload) {
+  const message = String(payload && payload.message ? payload.message : '')
+  const lower = message.toLowerCase()
+
+  if (lower.includes('materials low')) {
+    setAlertCondition('lowMaterialHardStop', 'Low materials detected. Build is blocked until refill succeeds.')
+  }
+
+  if (lower.includes('build stopped') || lower.includes('stopped by request')) {
+    clearAlertCondition('lowMaterialHardStop')
+  }
+
+  updateRepeatedPathAlert(message)
 }
 
 function formatDuration (ms) {
@@ -167,7 +289,36 @@ function renderDynamicTimeFields () {
 function updateStatus (status) {
   state.statusSnapshot = status
 
+  const previousConnectionState = state.previousConnectionState
   const connectionState = status.connectionState || 'offline'
+
+  if (connectionState === 'offline') {
+    setAlertCondition('disconnected', 'Disconnected from server. Bot operations are paused until reconnection succeeds.')
+    clearAlertCondition('reconnecting')
+  } else if (connectionState === 'reconnecting') {
+    setAlertCondition('reconnecting', 'Reconnecting to server. Monitoring and controls remain available.')
+    clearAlertCondition('disconnected')
+  } else if (connectionState === 'online') {
+    if (previousConnectionState && previousConnectionState !== 'online') {
+      clearAlertCondition('disconnected')
+      clearAlertCondition('reconnecting')
+      clearAlertCondition('sseError')
+      clearAlertCondition('sseWarning')
+    }
+  }
+  state.previousConnectionState = connectionState
+
+  const build = status.build || {}
+  const buildStatusText = String(build.status || build.state || '').toLowerCase()
+  if (buildStatusText === 'error') {
+    setAlertCondition('sseError', 'Build entered an error state. Review latest errors in the log.', { sticky: true })
+  }
+
+  const refill = status.refill || {}
+  if (refill.needsRefill && connectionState !== 'online') {
+    setAlertCondition('lowMaterialHardStop', 'Low materials plus connection loss detected. Refill and reconnect required before resuming.')
+  }
+
   const connectionCss = ['online', 'reconnecting', 'offline'].includes(connectionState) ? connectionState : 'offline'
   els.connectionBadge.textContent = connectionState.toUpperCase()
   els.connectionBadge.className = `badge ${connectionCss}`
@@ -178,7 +329,6 @@ function updateStatus (status) {
   els.reconnectValue.textContent = `${status.reconnectAttempts || 0}`
   els.uptimeValue.textContent = formatDuration(status.uptimeMs)
 
-  const build = status.build || {}
   const metrics = build.metrics || {}
   const layer = Number(build.layer || 0)
   const layersTotal = Number(build.layersTotal || 0)
@@ -209,7 +359,6 @@ function updateStatus (status) {
 
   renderMaterials(status.inventory || {}, status.refill || {})
 
-  const refill = status.refill || {}
   els.refillStatus.textContent = (refill.needsRefill ? 'NEEDS REFILL' : 'OK')
   const container = refill.lastRefillContainer
   els.refillContainer.textContent = container
@@ -296,11 +445,14 @@ function setupControls () {
 
   els.exportLogBtn.addEventListener('click', exportLogs)
   els.copyErrorBtn.addEventListener('click', () => copyLastError().catch(() => {}))
+  els.alertBarAck.addEventListener('click', acknowledgeCurrentAlert)
 }
+
 
 function onErrorEvent (payload) {
   state.lastError = payload.message || 'Unknown error'
   appendLog(payload)
+  mapIncomingAlertFromEvent(payload)
   els.errorSound.play().catch(() => {})
 
   if (window.Notification && Notification.permission === 'granted') {
@@ -323,11 +475,22 @@ function setupEventStream () {
 
   stream.addEventListener('status', event => updateStatus(JSON.parse(event.data)))
   stream.addEventListener('log', event => appendLog(JSON.parse(event.data)))
-  stream.addEventListener('warning', event => appendLog(JSON.parse(event.data)))
-  stream.addEventListener('error', event => onErrorEvent(JSON.parse(event.data)))
+  stream.addEventListener('warning', event => {
+    const payload = JSON.parse(event.data)
+    appendLog(payload)
+    mapIncomingAlertFromEvent(payload)
+    setAlertCondition('sseWarning', payload.message || 'Warning received from bot.')
+  })
+  stream.addEventListener('error', event => {
+    const payload = JSON.parse(event.data)
+    onErrorEvent(payload)
+    setAlertCondition('sseError', payload.message || 'Error received from bot.', { sticky: true })
+  })
 
   stream.onerror = () => {
-    appendLog({ level: 'warn', message: 'Event stream interrupted. Browser will retry automatically.', timestamp: Date.now() })
+    const payload = { level: 'warn', message: 'Event stream interrupted. Browser will retry automatically.', timestamp: Date.now() }
+    appendLog(payload)
+    setAlertCondition('reconnecting', 'Live updates interrupted. Browser will retry event stream automatically.')
   }
 }
 
