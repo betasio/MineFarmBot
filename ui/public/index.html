@@ -105,6 +105,13 @@
         <button data-action="return_home">Return Home</button>
         <button data-action="open_checkpoint">Open Checkpoint</button>
         <button id="copy-error-btn">Copy Last Error</button>
+        <div class="control-meta">
+          <label class="hold-toggle">
+            <input id="hold-stop-toggle" type="checkbox" checked />
+            Hold SAFE STOP to confirm
+          </label>
+          <p id="command-result" class="command-result idle" aria-live="polite">No command sent yet.</p>
+        </div>
       </footer>
     </main>
 

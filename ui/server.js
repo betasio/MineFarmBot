@@ -99,11 +99,37 @@ function startUiServer ({ engine, cfg }) {
 
         try {
           const handlers = {
-            start: async () => ({ accepted: true, message: 'Build start requested', result: await engine.startBuild() }),
+            start: async () => {
+              const status = engine.getStatus()
+              const build = status && status.build ? status.build : {}
+              const buildState = String(build.state || build.status || '').toLowerCase()
+              if (['running', 'paused', 'stopping'].includes(buildState) || build.stopRequested) {
+                return { accepted: true, idempotent: true, message: 'Build is already active' }
+              }
+              await engine.startBuild()
+              return { accepted: true, message: 'Build start requested' }
+            },
             pause: async () => ({ accepted: engine.pauseBuild(), message: 'Pause requested' }),
             resume: async () => ({ accepted: engine.resumeBuild(), message: 'Resume requested' }),
-            stop: async () => ({ accepted: engine.stopBuild(), message: 'Safe stop requested' }),
-            reconnect: async () => ({ ...(await engine.reconnectNow()) }),
+            stop: async () => {
+              const status = engine.getStatus()
+              const build = status && status.build ? status.build : {}
+              const buildState = String(build.state || build.status || '').toLowerCase()
+              if (buildState === 'stopping' || build.stopRequested) {
+                return { accepted: true, idempotent: true, message: 'Safe stop already requested' }
+              }
+              if (!['running', 'paused'].includes(buildState)) {
+                return { accepted: true, idempotent: true, message: 'Build is not running; nothing to stop' }
+              }
+              return { accepted: engine.stopBuild(), message: 'Safe stop requested' }
+            },
+            reconnect: async () => {
+              const status = engine.getStatus()
+              if (status && status.reconnectScheduled) {
+                return { accepted: true, idempotent: true, message: 'Reconnect already scheduled' }
+              }
+              return { ...(await engine.reconnectNow()) }
+            },
             force_refill: async () => ({ ...(await engine.forceRefillNow()) }),
             return_home: async () => ({ ...(await engine.returnHome()) }),
             open_checkpoint: async () => ({ ...(await engine.openCheckpoint()) })
