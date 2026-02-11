@@ -25,6 +25,10 @@ const els = {
   checkpointValue: document.getElementById('checkpoint-value'),
   coordValue: document.getElementById('coord-value'),
   dimensionValue: document.getElementById('dimension-value'),
+  botModeValue: document.getElementById('bot-mode-value'),
+  pauseReasonValue: document.getElementById('pause-reason-value'),
+  movementValue: document.getElementById('movement-value'),
+  lookAtValue: document.getElementById('look-at-value'),
   lastActionAge: document.getElementById('last-action-age'),
   logFeed: document.getElementById('log-feed'),
   materialsPanel: document.getElementById('materials-panel'),
@@ -241,6 +245,25 @@ function appendLog (entry) {
   }
 }
 
+function formatLookAt (lookAt) {
+  if (!lookAt || typeof lookAt !== 'object') return '--'
+  const name = lookAt.name || 'unknown'
+  const type = lookAt.type || 'target'
+  const pos = lookAt.position
+  if (!pos || typeof pos.x !== 'number' || typeof pos.y !== 'number' || typeof pos.z !== 'number') {
+    return `${type}: ${name}`
+  }
+  return `${type}: ${name} @ ${Math.round(pos.x)},${Math.round(pos.y)},${Math.round(pos.z)}`
+}
+
+function formatMovement (movement) {
+  if (!movement || typeof movement !== 'object') return '--'
+  const onGround = typeof movement.onGround === 'boolean' ? (movement.onGround ? 'yes' : 'no') : '--'
+  const velocityY = typeof movement.velocityY === 'number' ? movement.velocityY.toFixed(3) : '--'
+  const falling = typeof movement.isFalling === 'boolean' ? (movement.isFalling ? 'yes' : 'no') : '--'
+  return `ground=${onGround}, vY=${velocityY}, falling=${falling}`
+}
+
 function renderMaterials (inventory = {}, refill = {}) {
   const thresholds = refill.thresholds || lowThresholdDefaults
   const keys = ['sand', 'cactus', 'string', 'cobblestone']
@@ -356,6 +379,10 @@ function updateStatus (status) {
   }
 
   els.dimensionValue.textContent = status.dimension || '--'
+  els.botModeValue.textContent = String(status.botMode || 'idle').toUpperCase()
+  els.pauseReasonValue.textContent = status.pauseReason || '--'
+  els.movementValue.textContent = formatMovement(status.movement)
+  els.lookAtValue.textContent = formatLookAt(status.lookAt)
 
   renderMaterials(status.inventory || {}, status.refill || {})
 
