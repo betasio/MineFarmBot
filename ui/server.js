@@ -38,7 +38,6 @@ function startUiServer ({ engine, cfg }) {
   const port = guiConfig.port || 8787
   const publicDir = path.join(__dirname, 'public')
   const clients = new Set()
-  const publicDir = path.join(__dirname, 'public')
 
   const server = http.createServer((req, res) => {
     const reqUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`)
@@ -99,33 +98,54 @@ function startUiServer ({ engine, cfg }) {
         }
 
         try {
-          if (action === 'start') {
-            await engine.startBuild()
-            jsonResponse(res, 200, { ok: true, action, accepted: true })
+          const handlers = {
+            start: async () => ({ accepted: true, message: 'Build start requested', result: await engine.startBuild() }),
+            pause: async () => ({ accepted: engine.pauseBuild(), message: 'Pause requested' }),
+            resume: async () => ({ accepted: engine.resumeBuild(), message: 'Resume requested' }),
+            stop: async () => ({ accepted: engine.stopBuild(), message: 'Safe stop requested' }),
+            reconnect: async () => ({ ...(await engine.reconnectNow()) }),
+            force_refill: async () => ({ ...(await engine.forceRefillNow()) }),
+            return_home: async () => ({ ...(await engine.returnHome()) }),
+            open_checkpoint: async () => ({ ...(await engine.openCheckpoint()) })
+          }
+
+          const handler = handlers[action]
+          if (!handler) {
+            jsonResponse(res, 400, {
+              ok: false,
+              action,
+              error: {
+                code: 'UNSUPPORTED_ACTION',
+                message: `Unsupported action: ${action}`
+              }
+            })
             return
           }
 
-          if (action === 'pause') {
-            const accepted = engine.pauseBuild()
-            jsonResponse(res, 200, { ok: accepted, action, accepted })
-            return
-          }
-
-          if (action === 'resume') {
-            const accepted = engine.resumeBuild()
-            jsonResponse(res, 200, { ok: accepted, action, accepted })
-            return
-          }
-
-          if (action === 'stop') {
-            const accepted = engine.stopBuild()
-            jsonResponse(res, 200, { ok: accepted, action, accepted })
-            return
-          }
-
-          jsonResponse(res, 400, { ok: false, error: `Unsupported action: ${action}` })
+          const result = await handler()
+          const accepted = Boolean(result && result.accepted)
+          jsonResponse(res, accepted ? 200 : 409, {
+            ok: accepted,
+            action,
+            accepted,
+            message: result && result.message ? result.message : null,
+            data: result || null,
+            error: accepted
+              ? null
+              : {
+                  code: 'ACTION_REJECTED',
+                  message: (result && result.message) || `Action rejected: ${action}`
+                }
+          })
         } catch (err) {
-          jsonResponse(res, 500, { ok: false, error: err.message })
+          jsonResponse(res, 500, {
+            ok: false,
+            action,
+            error: {
+              code: 'ACTION_FAILED',
+              message: err.message
+            }
+          })
         }
       })
 
