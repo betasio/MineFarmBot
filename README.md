@@ -53,13 +53,7 @@ Project quality controls and gates are documented in `QUALITY.md` (ISO/IEC 5055-
 npm install
 ```
 
-3. Copy and edit config:
-
-```bash
-cp config.example.json config.json
-```
-
-4. Start:
+3. Start:
 
 ```bash
 npm start
@@ -75,6 +69,8 @@ The bot now exposes a lightweight GUI transport (HTTP + SSE) for a browser-based
 - `GET /status` — JSON snapshot of current state.
 - `GET /events` — Server-Sent Events (SSE) stream (`status`, `log`, `warning`, `error`).
 - `POST /control` — operator command bridge (`start`, `pause`, `resume`, `stop`).
+- `GET /config` — load effective config for Setup Wizard (includes required fields list).
+- `POST /config` — persist validated config updates from Setup Wizard.
 
 ### Operator controls
 
@@ -99,12 +95,12 @@ The GUI surfaces live operational telemetry so operators can monitor the bot wit
 2. Put this folder somewhere easy (for example `C:\MineFarmBot`).
 3. Open Command Prompt in the folder.
 4. Run `npm install` once.
-5. Run `copy config.example.json config.json` and edit `config.json` in Notepad.
-6. Sign in with your Microsoft account by keeping `auth` as `microsoft` in `config.json` (default).
-7. Set at least: server `host`, `port`, `username`, and farm `origin` / `safePlatform`.
-8. Start with `npm start`.
-9. Open the GUI URL shown in the startup logs and use the GUI controls (Start/Pause/Resume/Safe Stop).
-10. Use CLI commands only if the GUI is unavailable (debug/backup): `start`, `pause`, `resume`, `stop`, `status`.
+5. Start with `npm start`.
+6. Open the GUI URL shown in startup logs.
+7. Open **Setup Wizard** and fill required fields: server `host`, `port`, `username`, and farm `origin` / `safePlatform`.
+8. Save config from the GUI; restart process if you changed connection-level fields.
+9. Use GUI controls (Start/Pause/Resume/Safe Stop).
+10. Use CLI commands only if GUI is unavailable (debug/backup): `start`, `pause`, `resume`, `stop`, `status`.
 
 
 The bot prints clear stop messages if it detects unsafe movement, missing inventory, or disconnection.

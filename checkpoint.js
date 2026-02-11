@@ -48,44 +48,8 @@ function createCheckpointManager (cfgLayers) {
     } catch (err) {
       console.warn(`[WARN] Failed to clear checkpoint file: ${err.message}`)
     }
-  }
 
   function resetState () {}
-
-  function getSnapshot () {
-    const exists = fs.existsSync(checkpointPath)
-    if (!exists) {
-      return {
-        path: checkpointPath,
-        exists: false,
-        sizeBytes: 0,
-        mtimeMs: null,
-        content: null,
-        parsed: null,
-        pendingWrite: checkpointWritePending || pendingCheckpointPayload != null
-      }
-    }
-
-    const stat = fs.statSync(checkpointPath)
-    const content = fs.readFileSync(checkpointPath, 'utf8')
-
-    let parsed = null
-    try {
-      parsed = JSON.parse(content)
-    } catch {
-      parsed = null
-    }
-
-    return {
-      path: checkpointPath,
-      exists: true,
-      sizeBytes: stat.size,
-      mtimeMs: stat.mtimeMs,
-      content,
-      parsed,
-      pendingWrite: checkpointWritePending || pendingCheckpointPayload != null
-    }
-  }
 
   return {
     loadCheckpoint,

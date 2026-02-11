@@ -295,3 +295,80 @@ button {
     grid-template-columns: repeat(2, minmax(120px, 1fr));
   }
 }
+
+.config-dialog {
+  width: min(980px, 96vw);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 0;
+  background: #101a28;
+  color: var(--text);
+}
+
+.config-dialog::backdrop {
+  background: rgba(2, 6, 12, 0.72);
+}
+
+#config-form {
+  padding: 14px;
+}
+
+.dialog-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.help-text {
+  color: var(--muted);
+  margin: 6px 0 12px;
+}
+
+.config-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.config-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.config-grid input {
+  background: #0d1521;
+  border: 1px solid #385074;
+  border-radius: 8px;
+  color: var(--text);
+  padding: 8px 10px;
+}
+
+.checkline {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px !important;
+  padding-top: 18px;
+}
+
+.dialog-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+@media (max-width: 960px) {
+  .config-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 680px) {
+  .config-grid {
+    grid-template-columns: 1fr;
+  }
+}

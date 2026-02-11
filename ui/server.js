@@ -3,6 +3,7 @@
 const fs = require('fs')
 const http = require('http')
 const path = require('path')
+const { loadConfig, validateConfig } = require('../config')
 
 const MAX_CONTROL_PAYLOAD_BYTES = 4096
 const SSE_HEARTBEAT_MS = 15000
@@ -38,6 +39,12 @@ function startUiServer ({ engine, cfg }) {
   const port = guiConfig.port || 8787
   const publicDir = path.join(__dirname, 'public')
   const clients = new Set()
+  const configPath = path.join(process.cwd(), 'config.json')
+
+  function saveConfigToDisk (nextConfig) {
+    const payload = `${JSON.stringify(nextConfig, null, 2)}\n`
+    fs.writeFileSync(configPath, payload, 'utf8')
+  }
 
   const server = http.createServer((req, res) => {
     const reqUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`)
@@ -135,6 +142,93 @@ function startUiServer ({ engine, cfg }) {
       return
     }
 
+    if (req.method === 'GET' && reqUrl.pathname === '/config') {
+      const loaded = validateConfig(loadConfig())
+      jsonResponse(res, 200, {
+        ok: true,
+        config: loaded,
+        requiredFields: [
+          'host',
+          'port',
+          'username',
+          'origin.x',
+          'origin.y',
+          'origin.z',
+          'safePlatform.x',
+          'safePlatform.y',
+          'safePlatform.z'
+        ]
+      })
+      return
+    }
+
+    if (req.method === 'POST' && reqUrl.pathname === '/config') {
+      let body = ''
+      let size = 0
+
+      req.on('data', chunk => {
+        size += chunk.length
+        if (size > MAX_CONTROL_PAYLOAD_BYTES * 8) {
+          jsonResponse(res, 413, { ok: false, error: 'Payload too large' })
+          req.destroy()
+          return
+        }
+        body += chunk
+      })
+
+      req.on('end', () => {
+        let payload
+        try {
+          payload = body ? JSON.parse(body) : {}
+        } catch {
+          jsonResponse(res, 400, { ok: false, error: 'Invalid JSON payload' })
+          return
+        }
+
+        const userConfig = payload.config
+        if (!userConfig || typeof userConfig !== 'object') {
+          jsonResponse(res, 400, { ok: false, error: 'Missing config object' })
+          return
+        }
+
+        try {
+          const baseConfig = loadConfig()
+          const validated = validateConfig({
+            ...baseConfig,
+            ...userConfig,
+            origin: { ...(baseConfig.origin || {}), ...((userConfig && userConfig.origin) || {}) },
+            safePlatform: { ...(baseConfig.safePlatform || {}), ...((userConfig && userConfig.safePlatform) || {}) },
+            gui: { ...(baseConfig.gui || {}), ...((userConfig && userConfig.gui) || {}) },
+            refill: {
+              ...(baseConfig.refill || {}),
+              ...((userConfig && userConfig.refill) || {}),
+              thresholds: {
+                ...(((baseConfig.refill || {}).thresholds) || {}),
+                ...((((userConfig || {}).refill || {}).thresholds) || {})
+              },
+              targetStacks: {
+                ...(((baseConfig.refill || {}).targetStacks) || {}),
+                ...((((userConfig || {}).refill || {}).targetStacks) || {})
+              }
+            }
+          })
+          saveConfigToDisk(validated)
+          jsonResponse(res, 200, {
+            ok: true,
+            config: validated,
+            message: 'Configuration saved. Restart bot process to apply connection-level changes.'
+          })
+        } catch (err) {
+          jsonResponse(res, 500, { ok: false, error: err.message })
+        }
+      })
+
+      req.on('error', () => {
+        if (!res.headersSent) jsonResponse(res, 400, { ok: false, error: 'Failed to read request body' })
+      })
+      return
+    }
+
     if (req.method === 'GET' && (reqUrl.pathname === '/' || reqUrl.pathname.startsWith('/assets/'))) {
       const relativePath = reqUrl.pathname === '/' ? '/index.html' : reqUrl.pathname
       const fullPath = path.resolve(publicDir, relativePath.replace(/^\//, ''))
@@ -156,6 +250,57 @@ function startUiServer ({ engine, cfg }) {
         })
         fs.createReadStream(fullPath).pipe(res)
       })
+
+      req.on('end', async () => {
+        let payload
+        try {
+          payload = body ? JSON.parse(body) : {}
+        } catch {
+          jsonResponse(res, 400, { ok: false, error: 'Invalid JSON payload' })
+          return
+        }
+
+        const action = String(payload.action || '').toLowerCase()
+        if (!action) {
+          jsonResponse(res, 400, { ok: false, error: 'Missing action' })
+          return
+        }
+
+        try {
+          if (action === 'start') {
+            await engine.startBuild()
+            jsonResponse(res, 200, { ok: true, action, accepted: true })
+            return
+          }
+
+          if (action === 'pause') {
+            const accepted = engine.pauseBuild()
+            jsonResponse(res, 200, { ok: accepted, action, accepted })
+            return
+          }
+
+          if (action === 'resume') {
+            const accepted = engine.resumeBuild()
+            jsonResponse(res, 200, { ok: accepted, action, accepted })
+            return
+          }
+
+          if (action === 'stop') {
+            const accepted = engine.stopBuild()
+            jsonResponse(res, 200, { ok: accepted, action, accepted })
+            return
+          }
+
+          jsonResponse(res, 400, { ok: false, error: `Unsupported action: ${action}` })
+        } catch (err) {
+          jsonResponse(res, 500, { ok: false, error: err.message })
+        }
+      })
+
+      req.on('error', () => {
+        if (!res.headersSent) jsonResponse(res, 400, { ok: false, error: 'Failed to read request body' })
+      })
+
       return
     }
 

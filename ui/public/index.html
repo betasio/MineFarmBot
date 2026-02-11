@@ -72,8 +72,63 @@
       <button class="btn pause" data-action="pause">🟡 PAUSE</button>
       <button class="btn resume" data-action="resume">🔵 RESUME</button>
       <button class="btn stop" data-action="stop">🔴 SAFE STOP</button>
+      <button id="open-config-btn">⚙ Setup Wizard</button>
       <button id="copy-error-btn">Copy Last Error</button>
     </footer>
+
+    <dialog id="config-dialog" class="config-dialog">
+      <form id="config-form" method="dialog">
+        <div class="dialog-head">
+          <h3>Bot Setup Wizard</h3>
+          <button type="button" id="close-config-btn">✕</button>
+        </div>
+        <p class="help-text">Fields marked <strong>* Required</strong> are needed for a successful bot run.</p>
+
+        <div class="config-grid">
+          <label>Server Host * Required<input name="host" required /></label>
+          <label>Server Port * Required<input name="port" type="number" min="1" required /></label>
+          <label>Username * Required<input name="username" required /></label>
+          <label>Password<input name="password" /></label>
+          <label>Auth<input name="auth" /></label>
+          <label>Version<input name="version" /></label>
+
+          <label>Layers<input name="layers" type="number" min="1" /></label>
+          <label>Build Delay Ticks<input name="buildDelayTicks" type="number" min="1" /></label>
+          <label>Facing Yaw Degrees<input name="facingYawDegrees" type="number" /></label>
+
+          <label>Origin X * Required<input name="origin.x" type="number" required /></label>
+          <label>Origin Y * Required<input name="origin.y" type="number" required /></label>
+          <label>Origin Z * Required<input name="origin.z" type="number" required /></label>
+
+          <label>Safe Platform X * Required<input name="safePlatform.x" type="number" required /></label>
+          <label>Safe Platform Y * Required<input name="safePlatform.y" type="number" required /></label>
+          <label>Safe Platform Z * Required<input name="safePlatform.z" type="number" required /></label>
+
+          <label class="checkline"><input name="removeScaffold" type="checkbox" /> Remove scaffold</label>
+          <label class="checkline"><input name="refill.enabled" type="checkbox" /> Refill enabled</label>
+          <label>Refill Radius<input name="refill.radius" type="number" min="2" /></label>
+          <label>Refill Cooldown ms<input name="refill.cooldownMs" type="number" min="1000" /></label>
+          <label>Refill Ignore-Empty ms<input name="refill.ignoreEmptyMs" type="number" min="1000" /></label>
+
+          <label>Threshold Sand<input name="refill.thresholds.sand" type="number" min="1" /></label>
+          <label>Threshold Cactus<input name="refill.thresholds.cactus" type="number" min="1" /></label>
+          <label>Threshold String<input name="refill.thresholds.string" type="number" min="1" /></label>
+          <label>Threshold Cobblestone<input name="refill.thresholds.cobblestone" type="number" min="1" /></label>
+
+          <label>Target Stacks Sand<input name="refill.targetStacks.sand" type="number" min="1" /></label>
+          <label>Target Stacks Cactus<input name="refill.targetStacks.cactus" type="number" min="1" /></label>
+          <label>Target Stacks String<input name="refill.targetStacks.string" type="number" min="1" /></label>
+          <label>Target Stacks Cobblestone<input name="refill.targetStacks.cobblestone" type="number" min="1" /></label>
+        </div>
+
+        <p id="config-message" class="help-text"></p>
+
+        <div class="dialog-actions">
+          <button type="button" id="reload-config-btn">Reload</button>
+          <button type="submit" id="save-config-btn">Save Config</button>
+        </div>
+      </form>
+    </dialog>
 
     <audio id="error-sound" preload="none">
       <source src="data:audio/wav;base64,UklGRlQAAABXQVZFZm10IBAAAAABAAEARKwAABCxAgAEABAAZGF0YTAAAAAAAP8AAP8AAP8AAP8AAP8AAP8AAP8AAP8AAP8AAP8AAP8AAP8=" type="audio/wav" />

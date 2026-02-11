@@ -31,7 +31,13 @@ const els = {
   pauseScrollBtn: document.getElementById('pause-scroll-btn'),
   clearLogBtn: document.getElementById('clear-log-btn'),
   exportLogBtn: document.getElementById('export-log-btn'),
-  copyErrorBtn: document.getElementById('copy-error-btn')
+  copyErrorBtn: document.getElementById('copy-error-btn'),
+  openConfigBtn: document.getElementById('open-config-btn'),
+  configDialog: document.getElementById('config-dialog'),
+  closeConfigBtn: document.getElementById('close-config-btn'),
+  reloadConfigBtn: document.getElementById('reload-config-btn'),
+  configForm: document.getElementById('config-form'),
+  configMessage: document.getElementById('config-message')
 }
 
 const state = {
@@ -43,7 +49,8 @@ const state = {
   updateTicker: null,
   eventStream: null,
   controlsInFlight: false,
-  toastTimer: null
+  toastTimer: null,
+  configRequiredFields: []
 }
 
 function formatDuration (ms) {
@@ -83,6 +90,78 @@ function showToast (message) {
   }, 2500)
 }
 
+
+
+function setByPath (obj, path, value) {
+  const keys = path.split('.')
+  let cursor = obj
+  for (let i = 0; i < keys.length - 1; i++) {
+    const k = keys[i]
+    if (!cursor[k] || typeof cursor[k] !== 'object') cursor[k] = {}
+    cursor = cursor[k]
+  }
+  cursor[keys[keys.length - 1]] = value
+}
+
+function getByPath (obj, path) {
+  return path.split('.').reduce((acc, k) => (acc && Object.prototype.hasOwnProperty.call(acc, k) ? acc[k] : undefined), obj)
+}
+
+function markRequiredConfigFields () {
+  for (const input of els.configForm.querySelectorAll('input[name]')) {
+    const required = state.configRequiredFields.includes(input.name)
+    input.required = required || input.required
+    input.parentElement.style.color = required ? '#f3cb5d' : ''
+  }
+}
+
+function fillConfigForm (cfg) {
+  for (const input of els.configForm.querySelectorAll('input[name]')) {
+    const value = getByPath(cfg, input.name)
+    if (input.type === 'checkbox') input.checked = Boolean(value)
+    else if (value == null) input.value = ''
+    else input.value = String(value)
+  }
+}
+
+async function loadConfigForm () {
+  const data = await fetch('/config', { cache: 'no-store' }).then(r => r.json())
+  if (!data.ok) throw new Error(data.error || 'Failed to load config')
+  state.configRequiredFields = Array.isArray(data.requiredFields) ? data.requiredFields : []
+  fillConfigForm(data.config || {})
+  markRequiredConfigFields()
+  els.configMessage.textContent = 'Loaded current configuration.'
+}
+
+function collectConfigFromForm () {
+  const payload = {}
+  for (const input of els.configForm.querySelectorAll('input[name]')) {
+    let value
+    if (input.type === 'checkbox') value = input.checked
+    else if (input.type === 'number') value = input.value === '' ? null : Number(input.value)
+    else value = input.value.trim()
+
+    if (value === '' || Number.isNaN(value)) continue
+    setByPath(payload, input.name, value)
+  }
+  return payload
+}
+
+async function saveConfigForm () {
+  const payload = collectConfigFromForm()
+  const result = await fetch('/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ config: payload })
+  })
+  const body = await result.json().catch(() => ({}))
+  if (!result.ok || body.ok === false) {
+    throw new Error(body.error || 'Failed to save config')
+  }
+  fillConfigForm(body.config || {})
+  els.configMessage.textContent = body.message || 'Saved.'
+  showToast('Config saved successfully')
+}
 function setControlButtonsDisabled (disabled) {
   state.controlsInFlight = disabled
   for (const btn of document.querySelectorAll('[data-action]')) {
@@ -296,6 +375,35 @@ function setupControls () {
 
   els.exportLogBtn.addEventListener('click', exportLogs)
   els.copyErrorBtn.addEventListener('click', () => copyLastError().catch(() => {}))
+
+  els.openConfigBtn.addEventListener('click', async () => {
+    try {
+      await loadConfigForm()
+      els.configDialog.showModal()
+    } catch (err) {
+      appendLog({ level: 'error', message: err.message, timestamp: Date.now() })
+      showToast(err.message)
+    }
+  })
+
+  els.closeConfigBtn.addEventListener('click', () => {
+    els.configDialog.close()
+  })
+
+  els.reloadConfigBtn.addEventListener('click', () => {
+    loadConfigForm().catch(err => {
+      els.configMessage.textContent = err.message
+      showToast(err.message)
+    })
+  })
+
+  els.configForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    saveConfigForm().catch(err => {
+      els.configMessage.textContent = err.message
+      showToast(err.message)
+    })
+  })
 }
 
 function onErrorEvent (payload) {
@@ -340,6 +448,7 @@ async function init () {
 
   const status = await fetch('/status', { cache: 'no-store' }).then(r => r.json())
   updateStatus(status)
+  loadConfigForm().catch(() => {})
   setupEventStream()
 
   state.updateTicker = setInterval(renderDynamicTimeFields, 1000)
