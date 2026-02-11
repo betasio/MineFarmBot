@@ -316,6 +316,7 @@ function formatMovement (movement) {
 
 function renderMaterials (inventory = {}, refill = {}) {
   const thresholds = refill.thresholds || lowThresholdDefaults
+  const lowFlags = refill.low || {}
   const keys = ['sand', 'cactus', 'string', 'cobblestone']
   const fragment = document.createDocumentFragment()
 
@@ -327,7 +328,11 @@ function renderMaterials (inventory = {}, refill = {}) {
     const row = document.createElement('div')
     row.className = 'material-row'
 
-    const isLow = value <= threshold
+    const isLow = Boolean(lowFlags[key]) || value <= threshold
+    const isEmpty = value <= 0
+    if (isLow) row.classList.add('low-highlight')
+    if (isEmpty) row.classList.add('empty-highlight')
+
     row.innerHTML = [
       '<div class="material-head">',
       `<span>${key[0].toUpperCase() + key.slice(1)}</span>`,
@@ -359,6 +364,33 @@ function renderDynamicTimeFields () {
   }
 }
 
+function updateUiStateClasses (connectionState, buildState, refill = {}) {
+  const root = document.documentElement
+  const body = document.body
+  if (!root || !body) return
+
+  const states = ['online', 'reconnecting', 'offline']
+  for (const stateName of states) {
+    const className = `connection-${stateName}`
+    const shouldEnable = connectionState === stateName
+    root.classList.toggle(className, shouldEnable)
+    body.classList.toggle(className, shouldEnable)
+  }
+
+  const normalizedBuildState = String(buildState || '').toLowerCase()
+  const amberMode = normalizedBuildState === 'paused' || normalizedBuildState === 'stopping'
+  root.classList.toggle('app-amber-mode', amberMode)
+  body.classList.toggle('app-amber-mode', amberMode)
+
+  const lowFlags = refill.low || {}
+  const hasLowMaterials = Object.values(lowFlags).some(Boolean)
+  const hasEmptyMaterials = Object.keys(lowFlags).some(key => lowFlags[key] && Number((state.statusSnapshot && state.statusSnapshot.inventory && state.statusSnapshot.inventory[key]) || 0) <= 0)
+  root.classList.toggle('materials-low', hasLowMaterials)
+  body.classList.toggle('materials-low', hasLowMaterials)
+  root.classList.toggle('materials-empty', hasEmptyMaterials)
+  body.classList.toggle('materials-empty', hasEmptyMaterials)
+}
+
 function updateStatus (status) {
   state.statusSnapshot = status
 
@@ -383,6 +415,7 @@ function updateStatus (status) {
 
   const build = status.build || {}
   const buildStatusText = String(build.status || build.state || '').toLowerCase()
+  updateUiStateClasses(connectionState, build.state || build.status, status.refill || {})
   if (buildStatusText === 'error') {
     setAlertCondition('sseError', 'Build entered an error state. Review latest errors in the log.', { sticky: true })
   }
