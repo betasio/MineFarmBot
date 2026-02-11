@@ -629,6 +629,53 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     if (accepted) safeStop('Stop requested by controller')
     return accepted
   }
+
+  async function reconnectNow () {
+    reconnectScheduled = false
+    nextReconnectDelayMs = null
+    nextReconnectAt = null
+    connect()
+    emitStatus()
+    return {
+      accepted: true,
+      connected: Boolean(bot && bot.player),
+      message: 'Reconnect initiated'
+    }
+  }
+
+  async function forceRefillNow () {
+    const refilled = await refillManager.tryOpportunisticRefill(true)
+    emitStatus()
+    return {
+      accepted: true,
+      refilled,
+      refill: refillManager.getRefillStatus(),
+      message: refilled ? 'Refill completed from nearby container' : 'No refill performed; no suitable nearby container or nothing to withdraw'
+    }
+  }
+
+  async function returnHome () {
+    await moveToSafePlatform()
+    await bot.look(yawFromDegrees(cfg.facingYawDegrees), 0, true)
+    emitStatus()
+    return {
+      accepted: true,
+      position: bot && bot.entity && bot.entity.position
+        ? { x: bot.entity.position.x, y: bot.entity.position.y, z: bot.entity.position.z }
+        : null,
+      message: 'Moved to safe platform'
+    }
+  }
+
+  function openCheckpoint () {
+    const snapshot = checkpointManager.getSnapshot()
+    return {
+      accepted: true,
+      checkpoint: snapshot,
+      message: snapshot.exists ? 'Checkpoint snapshot loaded' : 'Checkpoint file not found'
+    }
+  }
+
   function getStatus () {
     return getStatusPayload()
   }
@@ -749,6 +796,10 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     pauseBuild,
     resumeBuild,
     stopBuild,
+    reconnectNow,
+    forceRefillNow,
+    returnHome,
+    openCheckpoint,
     getStatus,
     onLog,
     onStatus,

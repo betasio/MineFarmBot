@@ -81,7 +81,7 @@ const state = {
   logSearchTerm: ''
 }
 
-const CONTROL_ACTIONS = new Set(['start', 'pause', 'resume', 'stop', 'refill'])
+const CONTROL_ACTIONS = new Set(['start', 'pause', 'resume', 'stop', 'reconnect', 'force_refill', 'return_home', 'open_checkpoint'])
 
 
 function buildAlertCondition (key, message, overrides = {}) {
@@ -473,12 +473,28 @@ async function sendControl (action) {
 
     const payload = await result.json().catch(() => ({}))
     if (!result.ok || payload.ok === false) {
-      throw new Error(payload.error || `Action failed: ${action}`)
+      const structuredError = payload && payload.error && payload.error.message
+        ? payload.error.message
+        : payload.error
+      throw new Error(structuredError || `Action failed: ${action}`)
     }
 
     state.lastActionAt = Date.now()
-    appendLog({ level: 'action', action, message: `Control action accepted: ${action}`, timestamp: Date.now() })
-    showToast(`Action sent: ${action.toUpperCase()}`)
+    const actionMessage = payload && payload.message ? payload.message : `Control action accepted: ${action}`
+    appendLog({ level: 'action', action, message: actionMessage, timestamp: Date.now(), data: payload.data || null })
+
+    if (action === 'open_checkpoint' && payload.data && payload.data.checkpoint) {
+      const checkpoint = payload.data.checkpoint
+      const contentSummary = checkpoint.exists
+        ? `Checkpoint file: ${checkpoint.path} (${checkpoint.sizeBytes} bytes)`
+        : `Checkpoint file not found at ${checkpoint.path}`
+      appendLog({ level: 'info', message: contentSummary, timestamp: Date.now() })
+      if (checkpoint.exists && checkpoint.content) {
+        appendLog({ level: 'info', message: `Checkpoint content: ${checkpoint.content}`, timestamp: Date.now() })
+      }
+    }
+
+    showToast(payload && payload.message ? payload.message : `Action sent: ${action.toUpperCase()}`)
   } finally {
     setControlButtonsDisabled(false)
   }
