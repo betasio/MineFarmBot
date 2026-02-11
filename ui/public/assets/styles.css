@@ -26,6 +26,60 @@ body {
   padding: 16px;
 }
 
+@keyframes reconnectPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--warn) 0%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 10px color-mix(in srgb, var(--warn) 20%, transparent);
+  }
+}
+
+@keyframes lowMaterialBlink {
+  0%,
+  100% {
+    border-color: color-mix(in srgb, var(--warn) 35%, #345075);
+    background: color-mix(in srgb, var(--warn) 5%, transparent);
+  }
+  50% {
+    border-color: color-mix(in srgb, var(--warn) 70%, #345075);
+    background: color-mix(in srgb, var(--warn) 12%, transparent);
+  }
+}
+
+@keyframes emptyMaterialBlink {
+  0%,
+  100% {
+    border-color: color-mix(in srgb, var(--danger) 45%, #345075);
+    background: color-mix(in srgb, var(--danger) 8%, transparent);
+  }
+  50% {
+    border-color: color-mix(in srgb, var(--danger) 75%, #345075);
+    background: color-mix(in srgb, var(--danger) 15%, transparent);
+  }
+}
+
+body.app-amber-mode {
+  --accent: #e6b24a;
+  --action: #f9c35d;
+}
+
+body.app-amber-mode .card,
+body.app-amber-mode .controls,
+body.app-amber-mode .alert-bar.info {
+  border-color: color-mix(in srgb, var(--warn) 38%, var(--border));
+}
+
+body.app-amber-mode .progress {
+  border-color: color-mix(in srgb, var(--warn) 60%, #345075);
+}
+
+body.connection-reconnecting .topbar,
+body.connection-reconnecting #connection-badge.reconnecting {
+  animation: reconnectPulse 1.5s ease-in-out infinite;
+}
+
 h1,
 h2 {
   margin: 0 0 10px;
@@ -281,6 +335,10 @@ hr {
 
 .material-row {
   margin-bottom: 10px;
+  border-radius: 8px;
+  padding: 6px;
+  transition: background 180ms ease, border-color 180ms ease;
+  border: 1px solid transparent;
 }
 
 .material-head {
@@ -306,6 +364,14 @@ hr {
 .low {
   color: var(--warn);
   font-weight: 700;
+}
+
+.material-row.low-highlight {
+  animation: lowMaterialBlink 1.6s ease-in-out infinite;
+}
+
+.material-row.empty-highlight {
+  animation: emptyMaterialBlink 1.2s ease-in-out infinite;
 }
 
 .controls {
