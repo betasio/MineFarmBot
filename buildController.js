@@ -27,6 +27,7 @@ function createBuildController ({
   let buildMetrics = {
     startedAt: null,
     lastPlacementAt: null,
+    checkpointSavedAt: null,
     totalPlaced: 0,
     placementTimestamps: [],
     lastLayerCellCount: 0
@@ -36,6 +37,7 @@ function createBuildController ({
     buildMetrics = {
       startedAt: Date.now(),
       lastPlacementAt: null,
+      checkpointSavedAt: null,
       totalPlaced: 0,
       placementTimestamps: [],
       lastLayerCellCount: 0
@@ -57,6 +59,17 @@ function createBuildController ({
     if (!buildMetrics.startedAt) return 0
     const windowMinutes = placementWindowMs / 60000
     return buildMetrics.placementTimestamps.length / windowMinutes
+  }
+
+  function saveCheckpoint (layer, cell) {
+    checkpointManager.saveCheckpoint(layer, cell)
+    buildMetrics.checkpointSavedAt = Date.now()
+  }
+
+  function getPauseReason () {
+    if (state === 'paused') return 'build paused by controller'
+    if (state === 'stopping' || stopRequested) return 'stopping at next safe checkpoint'
+    return null
   }
 
   function estimateRemainingCells () {
@@ -155,9 +168,9 @@ function createBuildController ({
 
         if (nextCell % 16 === 0) {
           if (nextCell >= cells.length) {
-            checkpointManager.saveCheckpoint(layer + 1, 0)
+            saveCheckpoint(layer + 1, 0)
           } else {
-            checkpointManager.saveCheckpoint(layer, nextCell)
+            saveCheckpoint(layer, nextCell)
           }
         }
       }
@@ -226,20 +239,26 @@ function createBuildController ({
 
   function getStatus () {
     const placementsPerMinute = getPlacementsPerMinute()
+    const blocksPerHour = placementsPerMinute * 60
     const remainingInfo = estimateRemainingCells()
     const etaMs = getEtaMs(placementsPerMinute)
+    const pauseReason = getPauseReason()
     return {
       state,
       stopRequested,
+      pauseReason,
       ...progress,
       metrics: {
         placementsPerMinute,
+        blocksPerHour,
         etaMs,
         totalPlaced: buildMetrics.totalPlaced,
         estimatedTotalCells: remainingInfo ? remainingInfo.estimatedTotalCells : null,
         remainingCells: remainingInfo ? remainingInfo.remaining : null,
         startedAt: buildMetrics.startedAt,
-        lastPlacementAt: buildMetrics.lastPlacementAt
+        lastPlacementAt: buildMetrics.lastPlacementAt,
+        lastSuccessfulPlacementAt: buildMetrics.lastPlacementAt,
+        checkpointSavedAt: buildMetrics.checkpointSavedAt
       }
     }
   }

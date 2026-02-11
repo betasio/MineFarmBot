@@ -23,6 +23,8 @@ const els = {
   etaValue: document.getElementById('eta-value'),
   ppmValue: document.getElementById('ppm-value'),
   checkpointValue: document.getElementById('checkpoint-value'),
+  lastPlacementAgeValue: document.getElementById('last-placement-age'),
+  checkpointAgeValue: document.getElementById('checkpoint-age-value'),
   coordValue: document.getElementById('coord-value'),
   dimensionValue: document.getElementById('dimension-value'),
   botModeValue: document.getElementById('bot-mode-value'),
@@ -186,6 +188,11 @@ function formatDuration (ms) {
 function formatTime (ts) {
   if (!ts) return '--'
   return new Date(ts).toLocaleTimeString()
+}
+
+function formatAge (ts) {
+  if (!ts) return '--'
+  return `${formatDuration(Date.now() - ts)} ago`
 }
 
 function levelOf (entry) {
@@ -361,7 +368,7 @@ function updateStatus (status) {
   els.layerValue.textContent = `${layer} / ${layersTotal}`
   els.cellValue.textContent = `${cell} / ${cellsTotal}`
   els.buildState.textContent = String(build.status || build.state || 'idle').toUpperCase()
-  els.ppmValue.textContent = Number(metrics.placementsPerMinute || 0).toFixed(1)
+  els.ppmValue.textContent = `${Math.round(Number(metrics.blocksPerHour || 0))} blocks/hour`
   els.etaValue.textContent = formatDuration(metrics.etaMs)
   els.checkpointValue.textContent = `Layer ${layer}, Cell ${cell}`
 
@@ -380,9 +387,23 @@ function updateStatus (status) {
 
   els.dimensionValue.textContent = status.dimension || '--'
   els.botModeValue.textContent = String(status.botMode || 'idle').toUpperCase()
-  els.pauseReasonValue.textContent = status.pauseReason || '--'
+  const pauseReason = build.pauseReason || status.pauseReason || '--'
+  const isPausedOrStopping = build.state === 'paused' || build.state === 'stopping' || build.stopRequested
+  if (isPausedOrStopping && pauseReason !== '--') {
+    const badge = document.createElement('span')
+    badge.className = 'badge pause-reason'
+    badge.textContent = pauseReason
+    els.pauseReasonValue.replaceChildren(badge)
+  } else {
+    els.pauseReasonValue.textContent = pauseReason
+  }
   els.movementValue.textContent = formatMovement(status.movement)
   els.lookAtValue.textContent = formatLookAt(status.lookAt)
+
+  const lastPlacementAge = formatAge(metrics.lastSuccessfulPlacementAt)
+  const checkpointAge = formatAge(metrics.checkpointSavedAt)
+  els.lastPlacementAgeValue.textContent = lastPlacementAge === '--' ? '--' : `last placement ${lastPlacementAge}`
+  els.checkpointAgeValue.textContent = checkpointAge === '--' ? '--' : `checkpoint age ${checkpointAge}`
 
   renderMaterials(status.inventory || {}, status.refill || {})
 
