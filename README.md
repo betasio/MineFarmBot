@@ -48,6 +48,16 @@ Project quality controls and gates are documented in `QUALITY.md` (ISO/IEC 5055-
 
 ## Setup
 
+### Desktop app (EXE)
+
+For end users, MineFarmBot can run as a desktop application shell that starts the bot engine and opens the operator GUI automatically.
+
+- Development desktop run: `npm run start:desktop`
+- Build Windows portable EXE: `npm run dist:win`
+
+The desktop app wraps the same bot engine and GUI transport, so behavior remains consistent with CLI mode.
+
+
 1. Install Node.js 18+.
 2. Install dependencies:
 
