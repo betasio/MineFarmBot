@@ -39,6 +39,7 @@ const els = {
   configForm: document.getElementById('config-form'),
   configMessage: document.getElementById('config-message'),
   configRequiredAlert: document.getElementById('config-required-alert'),
+  restartBotBtn: document.getElementById('restart-bot-btn'),
   authTypeSelect: document.getElementById('auth-type-select'),
   microsoftEmailGroup: document.getElementById('microsoft-email-group'),
   offlineUsernameGroup: document.getElementById('offline-username-group')
@@ -67,6 +68,11 @@ function showToast (message) {
     els.toast.classList.remove('show')
     state.toastTimer = null
   }, 2400)
+}
+
+
+function isDesktopApp () {
+  return Boolean(window.minefarmDesktop && window.minefarmDesktop.isDesktop)
 }
 
 function formatDuration (ms) {
@@ -442,6 +448,23 @@ function setupControls () {
 
   els.exportLogBtn.addEventListener('click', exportLogs)
   els.copyErrorBtn.addEventListener('click', () => copyLastError().catch(() => {}))
+
+  if (isDesktopApp()) {
+    els.restartBotBtn.classList.remove('hidden')
+    els.restartBotBtn.addEventListener('click', async () => {
+      try {
+        const result = await window.minefarmDesktop.restartBot()
+        if (!result || result.ok === false) {
+          throw new Error(result && result.error ? result.error : 'Restart failed')
+        }
+        showToast('Bot process restarted')
+        appendLog({ level: 'info', message: 'Desktop wrapper restarted bot process', timestamp: Date.now() })
+      } catch (err) {
+        showToast(err.message)
+        appendLog({ level: 'error', message: err.message, timestamp: Date.now() })
+      }
+    })
+  }
 
   els.openConfigBtn.addEventListener('click', () => {
     loadConfigForm().then(() => {

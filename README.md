@@ -57,6 +57,13 @@ For end users, MineFarmBot can run as a desktop application shell that starts th
 
 The desktop app wraps the same bot engine and GUI transport, so behavior remains consistent with CLI mode.
 
+Desktop runtime features:
+- single-instance lock (second launch focuses existing window)
+- app icon (`desktop/assets/icon.svg`)
+- remembers last window size/position
+- minimize-to-tray behavior
+- in-app "Restart Bot" button (desktop mode only)
+
 
 1. Install Node.js 18+.
 2. Install dependencies:
