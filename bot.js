@@ -139,12 +139,85 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     return 'offline'
   }
 
+  function getMovementStatus () {
+    if (!bot || !bot.entity || !bot.entity.velocity) {
+      return { onGround: null, velocityY: null, isFalling: null }
+    }
+
+    const velocityY = bot.entity.velocity.y
+    const onGround = typeof bot.entity.onGround === 'boolean' ? bot.entity.onGround : null
+    return {
+      onGround,
+      velocityY,
+      isFalling: Boolean(!onGround && velocityY < -0.08)
+    }
+  }
+
+  function normalizeLookAtDescriptor () {
+    if (!bot) return null
+
+    try {
+      if (typeof bot.blockAtCursor === 'function') {
+        const block = bot.blockAtCursor(6)
+        if (block && block.position) {
+          return {
+            type: 'block',
+            name: block.displayName || block.name || 'unknown',
+            position: { x: block.position.x, y: block.position.y, z: block.position.z }
+          }
+        }
+      }
+
+      if (typeof bot.entityAtCursor === 'function') {
+        const entity = bot.entityAtCursor(6)
+        if (entity && entity.position) {
+          return {
+            type: 'entity',
+            name: entity.displayName || entity.username || entity.name || entity.type || 'unknown',
+            position: { x: entity.position.x, y: entity.position.y, z: entity.position.z }
+          }
+        }
+      }
+    } catch {
+      return null
+    }
+
+    return null
+  }
+
+  function isPathingActive () {
+    if (!bot || !bot.pathfinder) return false
+    if (typeof bot.pathfinder.isMoving === 'function') return bot.pathfinder.isMoving()
+    return false
+  }
+
+  function getPauseReason (build, refill) {
+    if (reconnectScheduled) return null
+    if (build && build.pauseReason) return build.pauseReason
+    if (refill && refill.needsRefill) return 'materials low; waiting for refill'
+    return null
+  }
+
+  function getBotMode (build, refill) {
+    if (reconnectScheduled) return 'reconnecting'
+    if (build && (build.state === 'paused' || build.state === 'stopping')) return 'paused'
+    if (build && build.state === 'running') return 'building'
+    if (refill && refill.needsRefill) return 'refilling'
+    if (isPathingActive()) return 'pathing'
+    return 'idle'
+  }
+
   function getStatusPayload () {
     const connected = Boolean(bot && bot.player)
     const position = bot && bot.entity && bot.entity.position
       ? { x: bot.entity.position.x, y: bot.entity.position.y, z: bot.entity.position.z }
       : null
     const uptimeMs = connectionStartedAt ? (Date.now() - connectionStartedAt) : lastUptimeMs
+    const refill = refillManager.getRefillStatus()
+    const lookAt = normalizeLookAtDescriptor()
+    const movement = getMovementStatus()
+    const botMode = getBotMode(buildStatus, refill)
+    const pauseReason = getPauseReason(buildStatus, refill)
     return {
       connectionState: getConnectionState(),
       connected,
@@ -161,9 +234,13 @@ function createBotEngine (config = validateConfig(loadConfig())) {
       reconnectDelayMs: nextReconnectDelayMs,
       reconnectAt: nextReconnectAt,
       position,
+      movement,
+      lookAt,
+      botMode,
+      pauseReason,
       build: buildStatus,
       inventory: inventory.getMaterialCounts(),
-      refill: refillManager.getRefillStatus()
+      refill
     }
   }
 
@@ -587,6 +664,53 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     if (accepted) safeStop('Stop requested by controller')
     return accepted
   }
+
+  async function reconnectNow () {
+    reconnectScheduled = false
+    nextReconnectDelayMs = null
+    nextReconnectAt = null
+    connect()
+    emitStatus()
+    return {
+      accepted: true,
+      connected: Boolean(bot && bot.player),
+      message: 'Reconnect initiated'
+    }
+  }
+
+  async function forceRefillNow () {
+    const refilled = await refillManager.tryOpportunisticRefill(true)
+    emitStatus()
+    return {
+      accepted: true,
+      refilled,
+      refill: refillManager.getRefillStatus(),
+      message: refilled ? 'Refill completed from nearby container' : 'No refill performed; no suitable nearby container or nothing to withdraw'
+    }
+  }
+
+  async function returnHome () {
+    await moveToSafePlatform()
+    await bot.look(yawFromDegrees(cfg.facingYawDegrees), 0, true)
+    emitStatus()
+    return {
+      accepted: true,
+      position: bot && bot.entity && bot.entity.position
+        ? { x: bot.entity.position.x, y: bot.entity.position.y, z: bot.entity.position.z }
+        : null,
+      message: 'Moved to safe platform'
+    }
+  }
+
+  function openCheckpoint () {
+    const snapshot = checkpointManager.getSnapshot()
+    return {
+      accepted: true,
+      checkpoint: snapshot,
+      message: snapshot.exists ? 'Checkpoint snapshot loaded' : 'Checkpoint file not found'
+    }
+  }
+
   function getStatus () {
     return getStatusPayload()
   }
@@ -708,6 +832,10 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     pauseBuild,
     resumeBuild,
     stopBuild,
+    reconnectNow,
+    forceRefillNow,
+    returnHome,
+    openCheckpoint,
     getStatus,
     onLog,
     onStatus,
