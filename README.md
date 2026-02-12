@@ -23,10 +23,17 @@ Mineflayer-based Minecraft Java bot that builds chunk-aligned cactus farm layers
   - Slows placement rate when lag is detected.
 - Adds tiny random head movement during work to appear less robotic.
 - Supports opportunistic refill from nearby chest/trapped chest/barrel when materials run low.
+- Recovery features:
+  - On fall detection during active build, requests recovery to last checkpoint instead of immediate fatal stop.
+  - On pathing failure for a cell, retries once using an alternate scaffold approach.
+- Post-placement build verification checks each completed cell and retries once on mismatch.
+- Crash-safe persistence: checkpoints are atomically written after each cell so resumes are precise after restarts/crashes.
 
 ## Quality
 
 Project quality controls and gates are documented in `QUALITY.md` (ISO/IEC 5055-aligned practical checklist).
+
+`npm run check` validates JavaScript syntax across project source files and checks for duplicate function declarations in `bot.js`.
 
 ## Project structure
 
@@ -41,6 +48,16 @@ Project quality controls and gates are documented in `QUALITY.md` (ISO/IEC 5055-
 
 ## Setup
 
+### Desktop app (EXE)
+
+For end users, MineFarmBot can run as a desktop application shell that starts the bot engine and opens the operator GUI automatically.
+
+- Development desktop run: `npm run start:desktop`
+- Build Windows portable EXE: `npm run dist:win`
+
+The desktop app wraps the same bot engine and GUI transport, so behavior remains consistent with CLI mode.
+
+
 1. Install Node.js 18+.
 2. Install dependencies:
 
@@ -48,13 +65,7 @@ Project quality controls and gates are documented in `QUALITY.md` (ISO/IEC 5055-
 npm install
 ```
 
-3. Copy and edit config:
-
-```bash
-cp config.example.json config.json
-```
-
-4. Start:
+3. Start:
 
 ```bash
 npm start
@@ -66,10 +77,22 @@ The bot now exposes a lightweight GUI transport (HTTP + SSE) for a browser-based
 
 **GUI transport endpoints**
 
+- `GET /` — Operator Control Panel dashboard (single-page UI).
 - `GET /status` — JSON snapshot of current state.
 - `GET /events` — Server-Sent Events (SSE) stream (`status`, `log`, `warning`, `error`).
+- `POST /control` — operator command bridge (`start`, `pause`, `resume`, `stop`).
+- `GET /config` — load effective config for Setup Wizard (includes required fields list).
+- `POST /config` — persist validated config updates from Setup Wizard (writes `config.json` and keeps a `config.json.bak` backup).
 
 ### Operator controls
+
+Setup Wizard validates required fields before run and prevents Start while mandatory configuration is missing.
+
+Auth Type selector behavior:
+- `microsoft` → shows **Microsoft Email** (stored internally as `config.username`).
+- `offline` → shows **Offline Username** (stored internally as `config.username`).
+- Password is intentionally removed from Setup Wizard for simpler onboarding.
+
 
 - **Start**: begins the build from the configured `origin` and initializes progress tracking.
 - **Pause**: halts work at the next safe checkpoint without logging out.
@@ -92,12 +115,12 @@ The GUI surfaces live operational telemetry so operators can monitor the bot wit
 2. Put this folder somewhere easy (for example `C:\MineFarmBot`).
 3. Open Command Prompt in the folder.
 4. Run `npm install` once.
-5. Run `copy config.example.json config.json` and edit `config.json` in Notepad.
-6. Sign in with your Microsoft account by keeping `auth` as `microsoft` in `config.json` (default).
-7. Set at least: server `host`, `port`, `username`, and farm `origin` / `safePlatform`.
-8. Start with `npm start`.
-9. Open the GUI URL shown in the startup logs and use the GUI controls (Start/Pause/Resume/Safe Stop).
-10. Use CLI commands only if the GUI is unavailable (debug/backup): `start`, `pause`, `resume`, `stop`, `status`.
+5. Start with `npm start`.
+6. Open the GUI URL shown in startup logs.
+7. Open **Setup Wizard** and fill required fields: server `host`, `port`, `username`, and farm `origin` / `safePlatform`.
+8. Save config from the GUI; restart process if you changed connection-level fields.
+9. Use GUI controls (Start/Pause/Resume/Safe Stop).
+10. Use CLI commands only if GUI is unavailable (debug/backup): `start`, `pause`, `resume`, `stop`, `status`.
 
 
 The bot prints clear stop messages if it detects unsafe movement, missing inventory, or disconnection.
@@ -114,7 +137,7 @@ Progress checkpoints are written every 16 placements to `build-checkpoint.json` 
 
 `config.json` fields:
 
-- `host`, `port`, `username`, `password`, `auth`, `version` (`auth` default is `microsoft`)
+- `host`, `port`, `username`, `auth`, `version` (`auth` default is `microsoft`)
 - `layers` (number of layers, recommended 15–20)
 - `buildDelayTicks` (base delay between placements)
 - `removeScaffold` (`true`/`false`, default `false` for safer high-layer runs)
