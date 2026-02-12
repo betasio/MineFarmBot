@@ -33,6 +33,8 @@ Mineflayer-based Minecraft Java bot that builds chunk-aligned cactus farm layers
 
 Project quality controls and gates are documented in `QUALITY.md` (ISO/IEC 5055-aligned practical checklist).
 
+`npm run check` validates JavaScript syntax across project source files and checks for duplicate function declarations in `bot.js`.
+
 ## Project structure
 
 - `bot.js` — bot engine + lifecycle/reconnect orchestration + CLI command bridge
