@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MineFarmBot Control Panel</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <div id="toast" class="toast" aria-live="polite"></div>
+
+    <header class="topbar card">
+      <div>
+        <h1>MineFarmBot Control Panel</h1>
+        <p id="server-meta">Server: -- | Bot: --</p>
+      </div>
+
+      <div class="health-grid">
+        <div><span class="label">Connection</span><strong id="connection-badge" class="badge offline">OFFLINE</strong></div>
+        <div><span class="label">Ping</span><strong id="ping-value">--</strong></div>
+        <div><span class="label">Lag mode</span><strong id="lag-value">--</strong></div>
+        <div><span class="label">Reconnect</span><strong id="reconnect-value">0</strong></div>
+        <div><span class="label">Countdown</span><strong id="reconnect-countdown">--</strong></div>
+        <div><span class="label">Uptime</span><strong id="uptime-value">--</strong></div>
+      </div>
+    </header>
+
+    <div id="config-required-alert" class="config-required-alert" hidden>Setup required: complete required fields in Setup Wizard before starting.</div>
+
+    <main class="dashboard-grid">
+      <section class="card">
+        <h2>Build Progress</h2>
+
+        <div class="metric"><span>Layer</span><strong id="layer-value">0 / 0</strong></div>
+        <div class="metric"><span>Cell</span><strong id="cell-value">0 / 0</strong></div>
+        <div class="metric"><span>State</span><strong id="build-state">IDLE</strong></div>
+
+        <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <div id="progress-fill"></div>
+        </div>
+
+        <div class="metric"><span>ETA</span><strong id="eta-value">--</strong></div>
+        <div class="metric"><span>Placements/min</span><strong id="ppm-value">0.0</strong></div>
+        <div class="metric"><span>Checkpoint</span><strong id="checkpoint-value">Layer 0, Cell 0</strong></div>
+        <div class="metric"><span>Coordinates</span><strong id="coord-value">--</strong></div>
+        <div class="metric"><span>Dimension</span><strong id="dimension-value">--</strong></div>
+        <div class="metric"><span>Last action</span><strong id="last-action-age">--</strong></div>
+      </section>
+
+      <section class="card">
+        <div class="log-header">
+          <h2>Live Activity Feed</h2>
+          <div class="inline-actions">
+            <button id="pause-scroll-btn">Pause Scroll</button>
+            <button id="clear-log-btn">Clear</button>
+            <button id="export-log-btn">Export</button>
+          </div>
+        </div>
+        <div id="log-feed" class="log-feed"></div>
+      </section>
+
+      <section class="card">
+        <h2>Materials & Refill</h2>
+        <div id="materials-panel"></div>
+        <hr />
+        <div class="metric"><span>Last refill</span><strong id="refill-time">--</strong></div>
+        <div class="metric"><span>Container</span><strong id="refill-container">--</strong></div>
+        <div class="metric"><span>Refill status</span><strong id="refill-status">IDLE</strong></div>
+      </section>
+    </main>
+
+    <footer class="controls card">
+      <button class="btn start" data-action="start">🟢 START</button>
+      <button class="btn pause" data-action="pause">🟡 PAUSE</button>
+      <button class="btn resume" data-action="resume">🔵 RESUME</button>
+      <button class="btn stop" data-action="stop">🔴 SAFE STOP</button>
+      <button id="open-config-btn">⚙ Setup Wizard</button>
+      <button id="copy-error-btn">Copy Last Error</button>
+    </footer>
+
+    <dialog id="config-dialog" class="config-dialog">
+      <form id="config-form" method="dialog">
+        <div class="dialog-head">
+          <h3>Bot Setup Wizard</h3>
+          <button type="button" id="close-config-btn">✕</button>
+        </div>
+        <p class="help-text">Fields marked <strong>* Required</strong> are mandatory before the bot can run.</p>
+
+        <section class="wizard-section">
+          <h4>Connection</h4>
+          <div class="config-grid">
+            <label>Server Host * Required<input name="host" required /></label>
+            <label>Server Port * Required<input name="port" type="number" min="1" required /></label>
+            <label>Auth Type * Required
+              <select name="auth" id="auth-type-select">
+                <option value="microsoft">microsoft</option>
+                <option value="offline">offline</option>
+              </select>
+            </label>
+            <label id="microsoft-email-group">Microsoft Email * Required<input name="microsoftEmail" type="email" /></label>
+            <label id="offline-username-group">Offline Username * Required<input name="offlineUsername" /></label>
+            <label>Version<input name="version" /></label>
+          </div>
+        </section>
+
+        <section class="wizard-section">
+          <h4>Build</h4>
+          <div class="config-grid">
+            <label>Layers<input name="layers" type="number" min="1" /></label>
+            <label>Build Delay Ticks<input name="buildDelayTicks" type="number" min="1" /></label>
+            <label>Facing Yaw Degrees<input name="facingYawDegrees" type="number" /></label>
+            <label>Origin X * Required<input name="origin.x" type="number" required /></label>
+            <label>Origin Y * Required<input name="origin.y" type="number" required /></label>
+            <label>Origin Z * Required<input name="origin.z" type="number" required /></label>
+            <label>Safe Platform X * Required<input name="safePlatform.x" type="number" required /></label>
+            <label>Safe Platform Y * Required<input name="safePlatform.y" type="number" required /></label>
+            <label>Safe Platform Z * Required<input name="safePlatform.z" type="number" required /></label>
+            <label class="checkline"><input name="removeScaffold" type="checkbox" /> Remove scaffold</label>
+          </div>
+        </section>
+
+        <section class="wizard-section">
+          <h4>Refill</h4>
+          <div class="config-grid">
+            <label class="checkline"><input name="refill.enabled" type="checkbox" /> Refill enabled</label>
+            <label>Refill Radius<input name="refill.radius" type="number" min="2" /></label>
+            <label>Refill Cooldown ms<input name="refill.cooldownMs" type="number" min="1000" /></label>
+            <label>Refill Ignore-Empty ms<input name="refill.ignoreEmptyMs" type="number" min="1000" /></label>
+            <label>Threshold Sand<input name="refill.thresholds.sand" type="number" min="1" /></label>
+            <label>Threshold Cactus<input name="refill.thresholds.cactus" type="number" min="1" /></label>
+            <label>Threshold String<input name="refill.thresholds.string" type="number" min="1" /></label>
+            <label>Threshold Cobblestone<input name="refill.thresholds.cobblestone" type="number" min="1" /></label>
+            <label>Target Stacks Sand<input name="refill.targetStacks.sand" type="number" min="1" /></label>
+            <label>Target Stacks Cactus<input name="refill.targetStacks.cactus" type="number" min="1" /></label>
+            <label>Target Stacks String<input name="refill.targetStacks.string" type="number" min="1" /></label>
+            <label>Target Stacks Cobblestone<input name="refill.targetStacks.cobblestone" type="number" min="1" /></label>
+          </div>
+        </section>
+
+        <p id="config-message" class="help-text"></p>
+
+        <div class="dialog-actions">
+          <button type="button" id="reload-config-btn">Reload</button>
+          <button type="submit" id="save-config-btn">Save Config</button>
+        </div>
+      </form>
+    </dialog>
+
+    <audio id="error-sound" preload="none">
+      <source src="data:audio/wav;base64,UklGRlQAAABXQVZFZm10IBAAAAABAAEARKwAABCxAgAEABAAZGF0YTAAAAAAAP8AAP8AAP8AAP8AAP8AAP8AAP8AAP8AAP8AAP8AAP8AAP8=" type="audio/wav" />
+    </audio>
+
+    <script src="/assets/app.js"></script>
+  </body>
+</html>
