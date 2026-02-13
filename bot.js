@@ -44,6 +44,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
   let lastUptimeMs = null
   let nextReconnectAt = null
   let nextReconnectDelayMs = null
+  let reconnectWindowStartedAt = null
   let safetyHooksArmed = false
   let lifecycleState = 'idle'
 
@@ -242,6 +243,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
       reconnectScheduled,
       reconnectDelayMs: nextReconnectDelayMs,
       reconnectAt: nextReconnectAt,
+      reconnectWindowStartedAt,
       lifecycleState,
       lookAt,
       movement,
@@ -780,10 +782,9 @@ function createBotEngine (config = validateConfig(loadConfig())) {
 
     reconnectScheduled = true
     reconnectAttempts += 1
-    const exponentialDelay = Math.min(RECONNECT_BASE_DELAY_MS * (2 ** (reconnectAttempts - 1)), MAX_RECONNECT_DELAY)
-    const jitterScale = 0.2
-    const jitteredDelay = exponentialDelay + ((Math.random() * 2 - 1) * exponentialDelay * jitterScale)
-    const delay = Math.max(250, Math.min(Math.floor(jitteredDelay), MAX_RECONNECT_DELAY, windowRemainingMs))
+    if (reconnectWindowStartedAt == null) reconnectWindowStartedAt = Date.now()
+    const baseDelay = (4000 + Math.random() * 3000) * reconnectAttempts
+    const delay = Math.min(Math.floor(baseDelay), MAX_RECONNECT_DELAY)
     nextReconnectDelayMs = delay
     nextReconnectAt = Date.now() + delay
     setLifecycleState(LIFECYCLE_STATES.RECONNECTING)
@@ -804,7 +805,6 @@ function createBotEngine (config = validateConfig(loadConfig())) {
       reconnectAttempts = 0
       reconnectScheduled = false
       reconnectWindowStartedAt = null
-      reconnectWindowEndsAt = null
       connectionStartedAt = Date.now()
       lastUptimeMs = null
       setLifecycleState(LIFECYCLE_STATES.RUNNING)
@@ -816,8 +816,6 @@ function createBotEngine (config = validateConfig(loadConfig())) {
       reconnectAttempts = 0
       reconnectScheduled = false
       reconnectWindowStartedAt = null
-      reconnectWindowEndsAt = null
-      setLifecycleState(LIFECYCLE_STATES.RUNNING)
       emitStatus()
 
       log('Spawned and connected. Waiting for start command...')
@@ -889,6 +887,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     lastUptimeMs = null
     nextReconnectDelayMs = null
     nextReconnectAt = null
+    reconnectWindowStartedAt = null
     safetyHooksArmed = false
     checkpointManager.resetState()
     humanizer.reset()
