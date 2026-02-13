@@ -222,6 +222,9 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     const lookAt = normalizeLookAtDescriptor()
     const movement = getMovementStatus()
     const botMode = getBotMode()
+    const pauseReason = buildStatus && typeof buildStatus.pauseReason === 'string'
+      ? buildStatus.pauseReason
+      : null
     return {
       connectionState: getConnectionState(),
       connected,
@@ -241,6 +244,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
       lookAt,
       movement,
       botMode,
+      pauseReason,
       position,
       movement,
       lookAt,
