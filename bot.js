@@ -15,6 +15,18 @@ const { startUiServer } = require('./ui/server')
 
 const TICKS_PER_SECOND = 20
 const MAX_RECONNECT_DELAY = 60_000
+const RECONNECT_BASE_DELAY_MS = 2_000
+const MAX_RECONNECT_WINDOW_MS = 10 * 60_000
+
+const LIFECYCLE_STATES = Object.freeze({
+  IDLE: 'idle',
+  CONNECTING: 'connecting',
+  AUTH_REQUIRED: 'auth_required',
+  RUNNING: 'running',
+  RECONNECTING: 'reconnecting',
+  STOPPED: 'stopped',
+  ERROR: 'error'
+})
 
 function createBotEngine (config = validateConfig(loadConfig())) {
   const cfg = config
@@ -32,6 +44,9 @@ function createBotEngine (config = validateConfig(loadConfig())) {
   let lastUptimeMs = null
   let nextReconnectAt = null
   let nextReconnectDelayMs = null
+  let reconnectWindowStartedAt = null
+  let reconnectWindowEndsAt = null
+  let lifecycleState = LIFECYCLE_STATES.IDLE
 
   const listeners = {
     log: new Set(),
@@ -139,12 +154,98 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     return 'offline'
   }
 
+  function setLifecycleState (nextState) {
+    if (!Object.values(LIFECYCLE_STATES).includes(nextState)) return false
+    if (lifecycleState === nextState) return false
+    lifecycleState = nextState
+    emitStatus()
+    return true
+  }
+
+  function isAuthRequiredReason (value) {
+    const text = String(value || '').toLowerCase()
+    return text.includes('microsoft.com/link') || text.includes('device code') || text.includes('invalid credentials')
+  }
+
+  function getMovementStatus () {
+    if (!bot || !bot.entity || !bot.entity.velocity) {
+      return { onGround: null, velocityY: null, isFalling: null }
+    }
+
+    const velocityY = bot.entity.velocity.y
+    const onGround = typeof bot.entity.onGround === 'boolean' ? bot.entity.onGround : null
+    return {
+      onGround,
+      velocityY,
+      isFalling: Boolean(!onGround && velocityY < -0.08)
+    }
+  }
+
+  function normalizeLookAtDescriptor () {
+    if (!bot) return null
+
+    try {
+      if (typeof bot.blockAtCursor === 'function') {
+        const block = bot.blockAtCursor(6)
+        if (block && block.position) {
+          return {
+            type: 'block',
+            name: block.displayName || block.name || 'unknown',
+            position: { x: block.position.x, y: block.position.y, z: block.position.z }
+          }
+        }
+      }
+
+      if (typeof bot.entityAtCursor === 'function') {
+        const entity = bot.entityAtCursor(6)
+        if (entity && entity.position) {
+          return {
+            type: 'entity',
+            name: entity.displayName || entity.username || entity.name || entity.type || 'unknown',
+            position: { x: entity.position.x, y: entity.position.y, z: entity.position.z }
+          }
+        }
+      }
+    } catch {
+      return null
+    }
+
+    return null
+  }
+
+  function isPathingActive () {
+    if (!bot || !bot.pathfinder) return false
+    if (typeof bot.pathfinder.isMoving === 'function') return bot.pathfinder.isMoving()
+    return false
+  }
+
+  function getPauseReason (build, refill) {
+    if (reconnectScheduled) return null
+    if (build && build.pauseReason) return build.pauseReason
+    if (refill && refill.needsRefill) return 'materials low; waiting for refill'
+    return null
+  }
+
+  function getBotMode (build, refill) {
+    if (reconnectScheduled) return 'reconnecting'
+    if (build && (build.state === 'paused' || build.state === 'stopping')) return 'paused'
+    if (build && build.state === 'running') return 'building'
+    if (refill && refill.needsRefill) return 'refilling'
+    if (isPathingActive()) return 'pathing'
+    return 'idle'
+  }
+
   function getStatusPayload () {
     const connected = Boolean(bot && bot.player)
     const position = bot && bot.entity && bot.entity.position
       ? { x: bot.entity.position.x, y: bot.entity.position.y, z: bot.entity.position.z }
       : null
     const uptimeMs = connectionStartedAt ? (Date.now() - connectionStartedAt) : lastUptimeMs
+    const refill = refillManager.getRefillStatus()
+    const lookAt = normalizeLookAtDescriptor()
+    const movement = getMovementStatus()
+    const botMode = getBotMode(buildStatus, refill)
+    const pauseReason = getPauseReason(buildStatus, refill)
     return {
       connectionState: getConnectionState(),
       connected,
@@ -160,10 +261,24 @@ function createBotEngine (config = validateConfig(loadConfig())) {
       reconnectScheduled,
       reconnectDelayMs: nextReconnectDelayMs,
       reconnectAt: nextReconnectAt,
+      lifecycleState,
+      retry: {
+        scheduled: reconnectScheduled,
+        attempt: reconnectAttempts,
+        delayMs: nextReconnectDelayMs,
+        reconnectAt: nextReconnectAt,
+        windowStartedAt: reconnectWindowStartedAt,
+        windowEndsAt: reconnectWindowEndsAt,
+        remainingWindowMs: reconnectWindowEndsAt ? Math.max(reconnectWindowEndsAt - Date.now(), 0) : null
+      },
       position,
+      movement,
+      lookAt,
+      botMode,
+      pauseReason,
       build: buildStatus,
       inventory: inventory.getMaterialCounts(),
-      refill: refillManager.getRefillStatus()
+      refill
     }
   }
 
@@ -614,24 +729,94 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     if (accepted) safeStop('Stop requested by controller')
     return accepted
   }
+
+  async function reconnectNow () {
+    reconnectScheduled = false
+    nextReconnectDelayMs = null
+    nextReconnectAt = null
+    reconnectWindowStartedAt = null
+    reconnectWindowEndsAt = null
+    setLifecycleState(LIFECYCLE_STATES.CONNECTING)
+    connect()
+    emitStatus()
+    return {
+      accepted: true,
+      connected: Boolean(bot && bot.player),
+      message: 'Reconnect initiated'
+    }
+  }
+
+  async function forceRefillNow () {
+    const refilled = await refillManager.tryOpportunisticRefill(true)
+    emitStatus()
+    return {
+      accepted: true,
+      refilled,
+      refill: refillManager.getRefillStatus(),
+      message: refilled ? 'Refill completed from nearby container' : 'No refill performed; no suitable nearby container or nothing to withdraw'
+    }
+  }
+
+  async function returnHome () {
+    await moveToSafePlatform()
+    await bot.look(yawFromDegrees(cfg.facingYawDegrees), 0, true)
+    emitStatus()
+    return {
+      accepted: true,
+      position: bot && bot.entity && bot.entity.position
+        ? { x: bot.entity.position.x, y: bot.entity.position.y, z: bot.entity.position.z }
+        : null,
+      message: 'Moved to safe platform'
+    }
+  }
+
+  function openCheckpoint () {
+    const snapshot = checkpointManager.getSnapshot()
+    return {
+      accepted: true,
+      checkpoint: snapshot,
+      message: snapshot.exists ? 'Checkpoint snapshot loaded' : 'Checkpoint file not found'
+    }
+  }
+
   function getStatus () {
     return getStatusPayload()
   }
 
   function handleReconnect (reason) {
     if (isStopping || reconnectScheduled) return
+    if (!reconnectWindowStartedAt) {
+      reconnectWindowStartedAt = Date.now()
+      reconnectWindowEndsAt = reconnectWindowStartedAt + MAX_RECONNECT_WINDOW_MS
+    }
+
+    const now = Date.now()
+    const windowRemainingMs = reconnectWindowEndsAt - now
+    if (windowRemainingMs <= 0) {
+      reconnectScheduled = false
+      nextReconnectAt = null
+      nextReconnectDelayMs = null
+      reportError(`Reconnect window exceeded after ${reconnectAttempts} attempts. Manual reconnect required.`)
+      setLifecycleState(LIFECYCLE_STATES.ERROR)
+      emitStatus()
+      return
+    }
+
     reconnectScheduled = true
     reconnectAttempts += 1
-    const baseDelay = (4000 + Math.random() * 3000) * reconnectAttempts
-    const delay = Math.min(Math.floor(baseDelay), MAX_RECONNECT_DELAY)
+    const exponentialDelay = Math.min(RECONNECT_BASE_DELAY_MS * (2 ** (reconnectAttempts - 1)), MAX_RECONNECT_DELAY)
+    const jitterScale = 0.2
+    const jitteredDelay = exponentialDelay + ((Math.random() * 2 - 1) * exponentialDelay * jitterScale)
+    const delay = Math.max(250, Math.min(Math.floor(jitteredDelay), MAX_RECONNECT_DELAY, windowRemainingMs))
     nextReconnectDelayMs = delay
     nextReconnectAt = Date.now() + delay
+    setLifecycleState(LIFECYCLE_STATES.RECONNECTING)
     log(`Lost connection (${reason}). Attempt ${reconnectAttempts}. Reconnecting in ${Math.floor(delay / 1000)}s`)
-    emitStatus()
     setTimeout(() => {
       reconnectScheduled = false
       nextReconnectDelayMs = null
       nextReconnectAt = null
+      setLifecycleState(LIFECYCLE_STATES.CONNECTING)
       connect()
     }, delay)
   }
@@ -640,14 +825,20 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     bot.once('login', () => {
       reconnectAttempts = 0
       reconnectScheduled = false
+      reconnectWindowStartedAt = null
+      reconnectWindowEndsAt = null
       connectionStartedAt = Date.now()
       lastUptimeMs = null
+      setLifecycleState(LIFECYCLE_STATES.RUNNING)
       emitStatus()
     })
 
     bot.once('spawn', async () => {
       reconnectAttempts = 0
       reconnectScheduled = false
+      reconnectWindowStartedAt = null
+      reconnectWindowEndsAt = null
+      setLifecycleState(LIFECYCLE_STATES.RUNNING)
       emitStatus()
 
       log('Spawned and connected. Waiting for start command...')
@@ -672,7 +863,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
       log('Disconnected from server.')
       if (connectionStartedAt) lastUptimeMs = Date.now() - connectionStartedAt
       connectionStartedAt = null
-      emitStatus()
+      setLifecycleState(LIFECYCLE_STATES.STOPPED)
       handleReconnect('end')
     })
 
@@ -680,7 +871,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
       reportError(`Kicked from server: ${reason}`)
       if (connectionStartedAt) lastUptimeMs = Date.now() - connectionStartedAt
       connectionStartedAt = null
-      emitStatus()
+      setLifecycleState(isAuthRequiredReason(reason) ? LIFECYCLE_STATES.AUTH_REQUIRED : LIFECYCLE_STATES.ERROR)
       handleReconnect('kicked')
     })
 
@@ -714,6 +905,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     checkpointManager.resetState()
     humanizer.reset()
     refillManager.reset()
+    setLifecycleState(LIFECYCLE_STATES.CONNECTING)
 
     bot = mineflayer.createBot({
       host: cfg.host,
@@ -736,6 +928,10 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     pauseBuild,
     resumeBuild,
     stopBuild,
+    reconnectNow,
+    forceRefillNow,
+    returnHome,
+    openCheckpoint,
     getStatus,
     onLog,
     onStatus,
