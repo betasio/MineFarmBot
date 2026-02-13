@@ -56,7 +56,7 @@
       <div class="card">
         <div class="inline">
           <h2>Available Bots</h2>
-          <span class="muted" id="count-msg"></span>
+          <div class="actions" style="margin-top:0"><button type="button" id="export-active-btn">Export Active Diagnostics</button><span class="muted" id="count-msg"></span></div>
         </div>
         <div id="profiles" class="profiles"></div>
       </div>
@@ -76,6 +76,7 @@
         createMsg: document.getElementById('create-msg'),
         profiles: document.getElementById('profiles'),
         refreshBtn: document.getElementById('refresh-btn'),
+        exportActiveBtn: document.getElementById('export-active-btn'),
         countMsg: document.getElementById('count-msg'),
         msaBox: document.getElementById('msa-box'),
         msaText: document.getElementById('msa-text')
@@ -87,6 +88,20 @@
         els.identityInput.placeholder = auth === 'offline' ? 'BotName123' : 'you@example.com'
       }
 
+
+
+      async function runDiagnosticsExport (profileId) {
+        const res = await window.minefarmDesktop.exportDiagnostics(profileId)
+        if (res.canceled) return
+        if (!res.ok) {
+          els.createMsg.textContent = res.error || 'Failed to export diagnostics'
+          return
+        }
+
+        const zipMsg = res.zipPath ? ` + ZIP: ${res.zipPath}` : ' (zip not available in this environment)'
+        els.createMsg.textContent = `Diagnostics exported: JSON: ${res.jsonPath}${zipMsg}`
+      }
+
       function profileCard (p) {
         const checkpoint = p.checkpoint ? `Layer ${p.checkpoint.layer}, Cell ${p.checkpoint.cell}` : 'No checkpoint yet'
         const div = document.createElement('div')
@@ -96,7 +111,10 @@
           <p class="muted" style="margin:0 0 4px">Auth: ${p.auth} | Host: ${p.host || '--'}</p>
           <p class="muted" style="margin:0 0 10px">User: ${p.username || '--'}</p>
           <p class="muted" style="margin:0 0 10px">Progress: ${checkpoint}</p>
-          <button data-launch="${p.id}">Launch Bot</button>
+          <div class="actions" style="margin-top:0">
+            <button data-launch="${p.id}">Launch Bot</button>
+            <button data-export="${p.id}" type="button">Export Diagnostics</button>
+          </div>
         `
         return div
       }
@@ -123,10 +141,20 @@
             }
           })
         })
+
+        els.profiles.querySelectorAll('[data-export]').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const id = btn.getAttribute('data-export')
+            btn.disabled = true
+            await runDiagnosticsExport(id)
+            btn.disabled = false
+          })
+        })
       }
 
       els.authSelect.addEventListener('change', updateIdentityLabel)
       els.refreshBtn.addEventListener('click', refreshProfiles)
+      els.exportActiveBtn.addEventListener('click', () => runDiagnosticsExport())
 
       els.form.addEventListener('submit', async (event) => {
         event.preventDefault()
