@@ -30,6 +30,7 @@ const LIFECYCLE_STATES = Object.freeze({
 
 function createBotEngine (config = validateConfig(loadConfig())) {
   const cfg = config
+  const shouldAutoStartDesktopBuild = process.env.MINEFARMBOT_AUTOSTART === '1'
 
   let bot
   let reconnectAttempts = 0
@@ -834,6 +835,11 @@ function createBotEngine (config = validateConfig(loadConfig())) {
 
         if (!hasSolidFooting()) {
           warn('Bot spawned without solid non-sand footing. Fix position, then run start.')
+        }
+
+        if (shouldAutoStartDesktopBuild) {
+          log('Desktop auto-start enabled. Starting build automatically...')
+          await startBuild()
         }
       } catch (err) {
         reportError(`Startup warning: ${err.message}`)

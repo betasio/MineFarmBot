@@ -189,7 +189,8 @@ function startBotProcess (profileId) {
       ELECTRON_RUN_AS_NODE: '1',
       MINEFARMBOT_DESKTOP: '1',
       BOT_CONFIG_PATH: cfgPath,
-      BOT_CHECKPOINT_PATH: checkpointPath
+      BOT_CHECKPOINT_PATH: checkpointPath,
+      MINEFARMBOT_AUTOSTART: '1'
     }
   })
 
