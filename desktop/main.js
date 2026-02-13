@@ -153,14 +153,16 @@ function extractMsaCode (text) {
     return null
   }
 
-  const codeMatch = raw.match(/(?:use\s+the\s+code|\botc=)\s*([A-Z0-9]{6,})/i)
+  const explicitCodeMatch = raw.match(/use\s+the\s+code\s*([A-Z0-9]{6,})/i)
+  const otcCodeMatch = raw.match(/[?&]otc=([A-Z0-9]{6,})/i)
+  const code = (explicitCodeMatch && explicitCodeMatch[1]) || (otcCodeMatch && otcCodeMatch[1]) || null
   const microsoftLinkMatch = raw.match(/https?:\/\/(?:www\.)?microsoft\.com\/link(?:\?[^\s]+)?/i)
   const legacyLinkMatch = raw.match(/https?:\/\/microsoft\.com\/link(?:\?[^\s]+)?/i)
   const url = (microsoftLinkMatch && microsoftLinkMatch[0]) || (legacyLinkMatch && legacyLinkMatch[0]) || 'https://www.microsoft.com/link'
 
-  if (!codeMatch && !microsoftLinkMatch && !legacyLinkMatch) return null
+  if (!code && !microsoftLinkMatch && !legacyLinkMatch) return null
   return {
-    code: codeMatch ? codeMatch[1].toUpperCase() : null,
+    code: code ? code.toUpperCase() : null,
     url
   }
 }
