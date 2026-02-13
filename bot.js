@@ -15,6 +15,18 @@ const { startUiServer } = require('./ui/server')
 
 const TICKS_PER_SECOND = 20
 const MAX_RECONNECT_DELAY = 60_000
+const RECONNECT_BASE_DELAY_MS = 2_000
+const MAX_RECONNECT_WINDOW_MS = 10 * 60_000
+
+const LIFECYCLE_STATES = Object.freeze({
+  IDLE: 'idle',
+  CONNECTING: 'connecting',
+  AUTH_REQUIRED: 'auth_required',
+  RUNNING: 'running',
+  RECONNECTING: 'reconnecting',
+  STOPPED: 'stopped',
+  ERROR: 'error'
+})
 
 function createBotEngine (config = validateConfig(loadConfig())) {
   const cfg = config
@@ -32,6 +44,9 @@ function createBotEngine (config = validateConfig(loadConfig())) {
   let lastUptimeMs = null
   let nextReconnectAt = null
   let nextReconnectDelayMs = null
+  let reconnectWindowStartedAt = null
+  let reconnectWindowEndsAt = null
+  let lifecycleState = LIFECYCLE_STATES.IDLE
 
   const listeners = {
     log: new Set(),
@@ -139,6 +154,19 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     return 'offline'
   }
 
+  function setLifecycleState (nextState) {
+    if (!Object.values(LIFECYCLE_STATES).includes(nextState)) return false
+    if (lifecycleState === nextState) return false
+    lifecycleState = nextState
+    emitStatus()
+    return true
+  }
+
+  function isAuthRequiredReason (value) {
+    const text = String(value || '').toLowerCase()
+    return text.includes('microsoft.com/link') || text.includes('device code') || text.includes('invalid credentials')
+  }
+
   function getMovementStatus () {
     if (!bot || !bot.entity || !bot.entity.velocity) {
       return { onGround: null, velocityY: null, isFalling: null }
@@ -233,6 +261,16 @@ function createBotEngine (config = validateConfig(loadConfig())) {
       reconnectScheduled,
       reconnectDelayMs: nextReconnectDelayMs,
       reconnectAt: nextReconnectAt,
+      lifecycleState,
+      retry: {
+        scheduled: reconnectScheduled,
+        attempt: reconnectAttempts,
+        delayMs: nextReconnectDelayMs,
+        reconnectAt: nextReconnectAt,
+        windowStartedAt: reconnectWindowStartedAt,
+        windowEndsAt: reconnectWindowEndsAt,
+        remainingWindowMs: reconnectWindowEndsAt ? Math.max(reconnectWindowEndsAt - Date.now(), 0) : null
+      },
       position,
       movement,
       lookAt,
@@ -669,6 +707,9 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     reconnectScheduled = false
     nextReconnectDelayMs = null
     nextReconnectAt = null
+    reconnectWindowStartedAt = null
+    reconnectWindowEndsAt = null
+    setLifecycleState(LIFECYCLE_STATES.CONNECTING)
     connect()
     emitStatus()
     return {
@@ -717,18 +758,38 @@ function createBotEngine (config = validateConfig(loadConfig())) {
 
   function handleReconnect (reason) {
     if (isStopping || reconnectScheduled) return
+    if (!reconnectWindowStartedAt) {
+      reconnectWindowStartedAt = Date.now()
+      reconnectWindowEndsAt = reconnectWindowStartedAt + MAX_RECONNECT_WINDOW_MS
+    }
+
+    const now = Date.now()
+    const windowRemainingMs = reconnectWindowEndsAt - now
+    if (windowRemainingMs <= 0) {
+      reconnectScheduled = false
+      nextReconnectAt = null
+      nextReconnectDelayMs = null
+      reportError(`Reconnect window exceeded after ${reconnectAttempts} attempts. Manual reconnect required.`)
+      setLifecycleState(LIFECYCLE_STATES.ERROR)
+      emitStatus()
+      return
+    }
+
     reconnectScheduled = true
     reconnectAttempts += 1
-    const baseDelay = (4000 + Math.random() * 3000) * reconnectAttempts
-    const delay = Math.min(Math.floor(baseDelay), MAX_RECONNECT_DELAY)
+    const exponentialDelay = Math.min(RECONNECT_BASE_DELAY_MS * (2 ** (reconnectAttempts - 1)), MAX_RECONNECT_DELAY)
+    const jitterScale = 0.2
+    const jitteredDelay = exponentialDelay + ((Math.random() * 2 - 1) * exponentialDelay * jitterScale)
+    const delay = Math.max(250, Math.min(Math.floor(jitteredDelay), MAX_RECONNECT_DELAY, windowRemainingMs))
     nextReconnectDelayMs = delay
     nextReconnectAt = Date.now() + delay
+    setLifecycleState(LIFECYCLE_STATES.RECONNECTING)
     log(`Lost connection (${reason}). Attempt ${reconnectAttempts}. Reconnecting in ${Math.floor(delay / 1000)}s`)
-    emitStatus()
     setTimeout(() => {
       reconnectScheduled = false
       nextReconnectDelayMs = null
       nextReconnectAt = null
+      setLifecycleState(LIFECYCLE_STATES.CONNECTING)
       connect()
     }, delay)
   }
@@ -737,14 +798,20 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     bot.once('login', () => {
       reconnectAttempts = 0
       reconnectScheduled = false
+      reconnectWindowStartedAt = null
+      reconnectWindowEndsAt = null
       connectionStartedAt = Date.now()
       lastUptimeMs = null
+      setLifecycleState(LIFECYCLE_STATES.RUNNING)
       emitStatus()
     })
 
     bot.once('spawn', async () => {
       reconnectAttempts = 0
       reconnectScheduled = false
+      reconnectWindowStartedAt = null
+      reconnectWindowEndsAt = null
+      setLifecycleState(LIFECYCLE_STATES.RUNNING)
       emitStatus()
 
       log('Spawned and connected. Waiting for start command...')
@@ -768,7 +835,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
       log('Disconnected from server.')
       if (connectionStartedAt) lastUptimeMs = Date.now() - connectionStartedAt
       connectionStartedAt = null
-      emitStatus()
+      setLifecycleState(LIFECYCLE_STATES.STOPPED)
       handleReconnect('end')
     })
 
@@ -776,7 +843,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
       reportError(`Kicked from server: ${reason}`)
       if (connectionStartedAt) lastUptimeMs = Date.now() - connectionStartedAt
       connectionStartedAt = null
-      emitStatus()
+      setLifecycleState(isAuthRequiredReason(reason) ? LIFECYCLE_STATES.AUTH_REQUIRED : LIFECYCLE_STATES.ERROR)
       handleReconnect('kicked')
     })
 
@@ -785,7 +852,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
       reportError(message)
       if (connectionStartedAt) lastUptimeMs = Date.now() - connectionStartedAt
       connectionStartedAt = null
-      emitStatus()
+      setLifecycleState(isAuthRequiredReason(message) ? LIFECYCLE_STATES.AUTH_REQUIRED : LIFECYCLE_STATES.ERROR)
       handleReconnect(`error: ${message}`)
     })
   }
@@ -810,6 +877,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     checkpointManager.resetState()
     humanizer.reset()
     refillManager.reset()
+    setLifecycleState(LIFECYCLE_STATES.CONNECTING)
 
     bot = mineflayer.createBot({
       host: cfg.host,
@@ -867,6 +935,15 @@ function runCli () {
   process.on('uncaughtException', err => handleRuntimeFailure('Uncaught exception', err))
 
   const desktopMode = process.env.MINEFARMBOT_DESKTOP === '1'
+  if (desktopMode && typeof process.send === 'function') {
+    const send = (channel, payload) => {
+      try { process.send({ channel, payload }) } catch {}
+    }
+    engine.onStatus(payload => send('status', payload))
+    engine.onLog(payload => send('log', payload))
+    engine.onWarning(payload => send('warning', payload))
+    engine.onError(payload => send('error', payload))
+  }
   if (!desktopMode) {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
     console.log('[CLI] Commands: start | pause | resume | stop | status | quit')

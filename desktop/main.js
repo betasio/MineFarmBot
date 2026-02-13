@@ -14,6 +14,7 @@ let tray = null
 let shutdownRequested = false
 let forceQuit = false
 let currentProfileId = null
+let lastLifecycleState = null
 
 const statePath = path.join(app.getPath('userData'), 'window-state.json')
 const profilesDir = path.join(app.getPath('userData'), 'profiles')
@@ -177,9 +178,11 @@ function startBotProcess (profileId) {
 
   botProcess = spawn(process.execPath, [botEntry], {
     cwd: path.join(__dirname, '..'),
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     env: botSpawnEnv
   })
+
+  lastLifecycleState = null
 
   const onOutput = (prefix, chunk) => {
     const text = chunk.toString()
@@ -194,6 +197,29 @@ function startBotProcess (profileId) {
 
   botProcess.stdout.on('data', chunk => onOutput('[BOT] ', chunk))
   botProcess.stderr.on('data', chunk => onOutput('[BOT:ERR] ', chunk))
+
+  botProcess.on('message', envelope => {
+    if (!envelope || typeof envelope !== 'object') return
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    const channel = envelope.channel
+    const payload = envelope.payload
+    if (!channel || !['status', 'log', 'warning', 'error'].includes(channel)) return
+
+    mainWindow.webContents.send(`desktop:${channel}`, payload)
+    if (channel === 'status') {
+      const lifecycleState = payload && payload.lifecycleState
+      if (lifecycleState && lifecycleState !== lastLifecycleState) {
+        const transition = {
+          previous: lastLifecycleState,
+          current: lifecycleState,
+          timestamp: Date.now(),
+          status: payload
+        }
+        mainWindow.webContents.send('desktop:status-transition', transition)
+        lastLifecycleState = lifecycleState
+      }
+    }
+  })
 
   botProcess.on('exit', (code, signal) => {
     const crashed = !shutdownRequested
@@ -211,6 +237,7 @@ function startBotProcess (profileId) {
 
 function stopBotProcess () {
   shutdownRequested = true
+  lastLifecycleState = null
   if (!botProcess) return
   try {
     botProcess.kill('SIGINT')
