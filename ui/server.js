@@ -6,10 +6,7 @@ const path = require('path')
 const { loadConfig, validateConfig } = require('../config')
 
 const MAX_CONTROL_PAYLOAD_BYTES = 4096
-const MAX_CONFIG_PAYLOAD_BYTES = 8192
 const SSE_HEARTBEAT_MS = 15000
-const CONTROL_RATE_LIMIT_WINDOW_MS = 5000
-const CONTROL_RATE_LIMIT_MAX_REQUESTS = 8
 const REQUIRED_CONFIG_FIELDS = [
   'host',
   'port',
@@ -62,191 +59,6 @@ function guessContentType (filePath) {
   }[ext] || 'application/octet-stream'
 }
 
-function isLoopbackAddress (remoteAddress) {
-  if (!remoteAddress || typeof remoteAddress !== 'string') return false
-  return remoteAddress === '127.0.0.1' ||
-    remoteAddress === '::1' ||
-    remoteAddress === '::ffff:127.0.0.1'
-}
-
-function requireLocalAccess (req, res) {
-  // This UI API intentionally trusts only local callers. If you expose it behind a
-  // reverse proxy, terminate and enforce auth/ACLs at the proxy, and keep the
-  // upstream connection local so req.socket.remoteAddress remains loopback.
-  if (!isLoopbackAddress(req.socket.remoteAddress)) {
-    jsonResponse(res, 403, { ok: false, error: 'Forbidden: local access only' })
-    return false
-  }
-  return true
-}
-
-function assertMethod (req, res, expectedMethod) {
-  if (req.method !== expectedMethod) {
-    jsonResponse(res, 405, { ok: false, error: `Method not allowed. Use ${expectedMethod}.` })
-    return false
-  }
-  return true
-}
-
-function assertJsonContentType (req, res) {
-  const contentType = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase()
-  if (contentType !== 'application/json') {
-    jsonResponse(res, 415, { ok: false, error: 'Unsupported media type. Expected application/json.' })
-    return false
-  }
-  return true
-}
-
-
-function getValueType (value) {
-  if (value === null) return 'null'
-  if (Array.isArray(value)) return 'array'
-  return typeof value
-}
-
-function validateShape (obj, schema, root = 'payload') {
-  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
-    return `${root} must be an object`
-  }
-
-  const allowedKeys = Object.keys(schema)
-  for (const key of Object.keys(obj)) {
-    if (!Object.prototype.hasOwnProperty.call(schema, key)) {
-      return `${root}.${key} is not allowed`
-    }
-  }
-
-  for (const key of allowedKeys) {
-    const rule = schema[key]
-    const value = obj[key]
-
-    if (rule.required && !Object.prototype.hasOwnProperty.call(obj, key)) {
-      return `${root}.${key} is required`
-    }
-    if (!Object.prototype.hasOwnProperty.call(obj, key)) continue
-
-    const allowedTypes = Array.isArray(rule.type) ? rule.type : [rule.type]
-    const valueType = getValueType(value)
-
-    if (!allowedTypes.includes(valueType)) {
-      return `${root}.${key} must be of type ${allowedTypes.join(' or ')}`
-    }
-
-    if (allowedTypes.includes('object') && rule.schema) {
-      const nestedError = validateShape(value, rule.schema, `${root}.${key}`)
-      if (nestedError) return nestedError
-    }
-  }
-
-  return null
-}
-
-function parseJsonBody (req, res, { maxBytes }) {
-  return new Promise((resolve) => {
-    let body = ''
-    let size = 0
-    let tooLarge = false
-
-    req.on('data', chunk => {
-      if (tooLarge) return
-      size += chunk.length
-      if (size > maxBytes) {
-        tooLarge = true
-        jsonResponse(res, 413, { ok: false, error: 'Payload too large' })
-        return
-      }
-      body += chunk
-    })
-
-    req.on('end', () => {
-      if (res.headersSent || tooLarge) {
-        resolve(null)
-        return
-      }
-      try {
-        const parsed = body ? JSON.parse(body) : {}
-        resolve(parsed)
-      } catch {
-        jsonResponse(res, 400, { ok: false, error: 'Invalid JSON payload' })
-        resolve(null)
-      }
-    })
-
-    req.on('error', () => {
-      if (!res.headersSent) jsonResponse(res, 400, { ok: false, error: 'Failed to read request body' })
-      resolve(null)
-    })
-  })
-}
-
-const CONTROL_SCHEMA = {
-  action: { required: true, type: 'string' }
-}
-
-const CONFIG_PATCH_SCHEMA = {
-  host: { type: 'string' },
-  port: { type: 'number' },
-  username: { type: 'string' },
-  password: { type: ['string', 'null'] },
-  auth: { type: 'string' },
-  version: { type: ['string', 'boolean'] },
-  layers: { type: 'number' },
-  buildDelayTicks: { type: 'number' },
-  removeScaffold: { type: 'boolean' },
-  facingYawDegrees: { type: 'number' },
-  origin: {
-    type: 'object',
-    schema: { x: { type: 'number' }, y: { type: 'number' }, z: { type: 'number' } }
-  },
-  safePlatform: {
-    type: 'object',
-    schema: { x: { type: 'number' }, y: { type: 'number' }, z: { type: 'number' } }
-  },
-  gui: {
-    type: 'object',
-    schema: {
-      enabled: { type: 'boolean' },
-      host: { type: 'string' },
-      port: { type: 'number' }
-    }
-  },
-  refill: {
-    type: 'object',
-    schema: {
-      enabled: { type: 'boolean' },
-      radius: { type: 'number' },
-      cooldownMs: { type: 'number' },
-      ignoreEmptyMs: { type: 'number' },
-      thresholds: {
-        type: 'object',
-        schema: {
-          sand: { type: 'number' },
-          cactus: { type: 'number' },
-          string: { type: 'number' },
-          cobblestone: { type: 'number' }
-        }
-      },
-      targetStacks: {
-        type: 'object',
-        schema: {
-          sand: { type: 'number' },
-          cactus: { type: 'number' },
-          string: { type: 'number' },
-          cobblestone: { type: 'number' }
-        }
-      }
-    }
-  }
-}
-
-const CONFIG_SCHEMA = {
-  config: {
-    required: true,
-    type: 'object',
-    schema: CONFIG_PATCH_SCHEMA
-  }
-}
-
 function startUiServer ({ engine, cfg }) {
   const guiConfig = cfg.gui || {}
   if (guiConfig.enabled === false) {
@@ -258,7 +70,6 @@ function startUiServer ({ engine, cfg }) {
   const publicDir = path.join(__dirname, 'public')
   const clients = new Set()
   const configPath = path.join(process.cwd(), 'config.json')
-  const controlRateLimit = []
 
   function saveConfigToDisk (nextConfig) {
     const payload = `${JSON.stringify(nextConfig, null, 2)}\n`
@@ -267,8 +78,6 @@ function startUiServer ({ engine, cfg }) {
 
   const server = http.createServer((req, res) => {
     const reqUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`)
-
-    if (!requireLocalAccess(req, res)) return
 
     if (req.method === 'GET' && reqUrl.pathname === '/status') {
       jsonResponse(res, 200, engine.getStatus())
@@ -296,30 +105,34 @@ function startUiServer ({ engine, cfg }) {
       return
     }
 
-    if (reqUrl.pathname === '/control') {
-      if (!assertMethod(req, res, 'POST')) return
-      if (!assertJsonContentType(req, res)) return
+    if (req.method === 'POST' && reqUrl.pathname === '/control') {
+      let body = ''
+      let size = 0
 
-      const now = Date.now()
-      while (controlRateLimit.length > 0 && now - controlRateLimit[0] > CONTROL_RATE_LIMIT_WINDOW_MS) {
-        controlRateLimit.shift()
-      }
-      if (controlRateLimit.length >= CONTROL_RATE_LIMIT_MAX_REQUESTS) {
-        jsonResponse(res, 429, { ok: false, error: 'Too many control requests. Slow down.' })
-        return
-      }
-      controlRateLimit.push(now)
+      req.on('data', chunk => {
+        size += chunk.length
+        if (size > MAX_CONTROL_PAYLOAD_BYTES) {
+          jsonResponse(res, 413, { ok: false, error: 'Payload too large' })
+          req.destroy()
+          return
+        }
+        body += chunk
+      })
 
-      parseJsonBody(req, res, { maxBytes: MAX_CONTROL_PAYLOAD_BYTES }).then(async payload => {
-        if (!payload) return
-
-        const schemaError = validateShape(payload, CONTROL_SCHEMA)
-        if (schemaError) {
-          jsonResponse(res, 400, { ok: false, error: `Invalid payload: ${schemaError}` })
+      req.on('end', async () => {
+        let payload
+        try {
+          payload = body ? JSON.parse(body) : {}
+        } catch {
+          jsonResponse(res, 400, { ok: false, error: 'Invalid JSON payload' })
           return
         }
 
         const action = String(payload.action || '').toLowerCase()
+        if (!action) {
+          jsonResponse(res, 400, { ok: false, error: 'Missing action' })
+          return
+        }
 
         try {
           if (action === 'start') {
@@ -351,6 +164,11 @@ function startUiServer ({ engine, cfg }) {
           jsonResponse(res, 500, { ok: false, error: err.message })
         }
       })
+
+      req.on('error', () => {
+        if (!res.headersSent) jsonResponse(res, 400, { ok: false, error: 'Failed to read request body' })
+      })
+
       return
     }
 
@@ -365,20 +183,34 @@ function startUiServer ({ engine, cfg }) {
       return
     }
 
-    if (reqUrl.pathname === '/config' && req.method !== 'GET') {
-      if (!assertMethod(req, res, 'POST')) return
-      if (!assertJsonContentType(req, res)) return
+    if (req.method === 'POST' && reqUrl.pathname === '/config') {
+      let body = ''
+      let size = 0
 
-      parseJsonBody(req, res, { maxBytes: MAX_CONFIG_PAYLOAD_BYTES }).then(payload => {
-        if (!payload) return
+      req.on('data', chunk => {
+        size += chunk.length
+        if (size > MAX_CONTROL_PAYLOAD_BYTES * 8) {
+          jsonResponse(res, 413, { ok: false, error: 'Payload too large' })
+          req.destroy()
+          return
+        }
+        body += chunk
+      })
 
-        const schemaError = validateShape(payload, CONFIG_SCHEMA)
-        if (schemaError) {
-          jsonResponse(res, 400, { ok: false, error: `Invalid payload: ${schemaError}` })
+      req.on('end', () => {
+        let payload
+        try {
+          payload = body ? JSON.parse(body) : {}
+        } catch {
+          jsonResponse(res, 400, { ok: false, error: 'Invalid JSON payload' })
           return
         }
 
         const userConfig = payload.config
+        if (!userConfig || typeof userConfig !== 'object') {
+          jsonResponse(res, 400, { ok: false, error: 'Missing config object' })
+          return
+        }
 
         try {
           const baseConfig = loadConfig()
@@ -429,6 +261,10 @@ function startUiServer ({ engine, cfg }) {
         } catch (err) {
           jsonResponse(res, 500, { ok: false, error: err.message })
         }
+      })
+
+      req.on('error', () => {
+        if (!res.headersSent) jsonResponse(res, 400, { ok: false, error: 'Failed to read request body' })
       })
       return
     }
