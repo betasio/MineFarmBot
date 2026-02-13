@@ -139,7 +139,11 @@ function startBotProcess () {
   const botEntry = path.join(__dirname, '..', 'bot.js')
   botProcess = spawn(process.execPath, [botEntry], {
     cwd: path.join(__dirname, '..'),
-    stdio: ['ignore', 'pipe', 'pipe']
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: '1'
+    }
   })
 
   botProcess.stdout.on('data', chunk => process.stdout.write(`[BOT] ${chunk}`))
