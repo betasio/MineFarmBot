@@ -153,19 +153,36 @@ function extractMsaCode (text) {
     return null
   }
 
-  const explicitCodeMatch = raw.match(/use\s+the\s+code\s*([A-Z0-9]{6,})/i)
-  const otcCodeMatch = raw.match(/[?&]otc=([A-Z0-9]{6,})/i)
-  const code = (explicitCodeMatch && explicitCodeMatch[1]) || (otcCodeMatch && otcCodeMatch[1]) || null
-  const microsoftLinkMatch = raw.match(/https?:\/\/(?:www\.)?microsoft\.com\/link(?:\?[^\s]+)?/i)
-  const legacyLinkMatch = raw.match(/https?:\/\/microsoft\.com\/link(?:\?[^\s]+)?/i)
-  const url = (microsoftLinkMatch && microsoftLinkMatch[0]) || (legacyLinkMatch && legacyLinkMatch[0]) || 'https://www.microsoft.com/link'
+  let code = null
+  const codeMarker = 'use the code '
+  const markerIndex = normalized.indexOf(codeMarker)
+  if (markerIndex >= 0) {
+    const after = raw.slice(markerIndex + codeMarker.length)
+    const token = after.split(/\s|\.|,|;|\)|\(/)[0]
+    if (token && /^[A-Za-z0-9]{6,}$/.test(token)) code = token.toUpperCase()
+  }
 
-  if (!code && !microsoftLinkMatch && !legacyLinkMatch) return null
+  const urlMatch = raw.match(/https?:\/\/[^\s]+/i)
+  const url = urlMatch ? urlMatch[0] : 'https://www.microsoft.com/link'
+
+  if (!code && urlMatch) {
+    try {
+      const parsed = new URL(url)
+      const otc = parsed.searchParams.get('otc')
+      if (otc && /^[A-Za-z0-9]{6,}$/.test(otc)) code = otc.toUpperCase()
+    } catch {}
+  }
+
+  const lowerUrl = url.toLowerCase()
+  const isMicrosoftLink = lowerUrl.includes('microsoft.com/link')
+  if (!code && !isMicrosoftLink) return null
+
   return {
-    code: code ? code.toUpperCase() : null,
-    url
+    code,
+    url: isMicrosoftLink ? url : 'https://www.microsoft.com/link'
   }
 }
+
 
 function pushBounded (target, value, maxSize) {
   target.push(value)
