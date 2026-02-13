@@ -32,6 +32,8 @@ function createBotEngine (config = validateConfig(loadConfig())) {
   let lastUptimeMs = null
   let nextReconnectAt = null
   let nextReconnectDelayMs = null
+  let safetyHooksArmed = false
+  let lifecycleState = 'idle'
 
   const listeners = {
     log: new Set(),
@@ -103,6 +105,20 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     handleLogEntry(createLogEntry('error', message))
   }
 
+
+  function formatErrorMessage (err) {
+    if (!err) return 'Unknown error'
+    if (typeof err.message === 'string' && err.message.trim().length > 0) return err.message
+    if (Array.isArray(err.errors) && err.errors.length > 0) {
+      const first = err.errors[0]
+      if (first && typeof first.message === 'string' && first.message.trim().length > 0) {
+        return first.message
+      }
+    }
+    if (typeof err.code === 'string' && err.code.length > 0) return err.code
+    return String(err)
+  }
+
   const checkpointManager = createCheckpointManager(cfg.layers)
 
   function getBot () {
@@ -123,6 +139,28 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     if (bot && bot.player) return 'online'
     if (reconnectScheduled) return 'reconnecting'
     return 'offline'
+  }
+
+  function setLifecycleState (nextState) {
+    if (lifecycleState === nextState) return false
+    lifecycleState = nextState
+    emitStatus()
+    return true
+  }
+
+
+  function normalizeLookAtDescriptor () {
+    if (!bot || !bot.entity || !bot.entity.position) return null
+    const yaw = Number(bot.entity.yaw)
+    const pitch = Number(bot.entity.pitch)
+    return {
+      yaw: Number.isFinite(yaw) ? yaw : null,
+      pitch: Number.isFinite(pitch) ? pitch : null,
+      facingYawDegrees: Number.isFinite(yaw) ? Number((yaw * 180 / Math.PI).toFixed(2)) : null,
+      x: bot.entity.position.x,
+      y: bot.entity.position.y,
+      z: bot.entity.position.z
+    }
   }
 
   function getStatusPayload () {
@@ -146,6 +184,8 @@ function createBotEngine (config = validateConfig(loadConfig())) {
       reconnectScheduled,
       reconnectDelayMs: nextReconnectDelayMs,
       reconnectAt: nextReconnectAt,
+      lifecycleState,
+      lookAt: normalizeLookAtDescriptor(),
       position,
       build: buildStatus,
       inventory: inventory.getMaterialCounts(),
@@ -268,16 +308,43 @@ function createBotEngine (config = validateConfig(loadConfig())) {
 
   function buildGridTasks (origin, layerIndex) {
     const y = origin.y + (layerIndex * 3)
+    const size = Math.max(3, Number(cfg.farmSize) || 16)
     const cells = []
-    for (let dz = 0; dz < 16; dz++) {
+    for (let dz = 0; dz < size; dz++) {
       const leftToRight = dz % 2 === 0
-      const xValues = leftToRight ? [...Array(16).keys()] : [...Array(16).keys()].reverse()
+      const xValues = leftToRight ? [...Array(size).keys()] : [...Array(size).keys()].reverse()
       for (const dx of xValues) {
         const scaffoldOffsetX = leftToRight ? 1 : -1
         cells.push({ sandPos: new Vec3(origin.x + dx, y, origin.z + dz), scaffoldOffsetX })
       }
     }
     return cells
+  }
+
+  function resolveEasyPlacementFromPlayerPosition () {
+    const placementMode = String(cfg.placementMode || 'manual').toLowerCase()
+    if (placementMode !== 'easy') return
+
+    const size = Math.max(3, Number(cfg.farmSize) || 16)
+    const center = bot.entity.position.floored()
+    const half = Math.floor(size / 2)
+    const origin = {
+      x: center.x - half,
+      y: center.y,
+      z: center.z - half
+    }
+
+    let safeY = center.y
+    const centerBlock = bot.blockAt(new Vec3(center.x, center.y, center.z))
+    const belowCenter = bot.blockAt(new Vec3(center.x, center.y - 1, center.z))
+    const belowSolid = belowCenter && belowCenter.boundingBox === 'block' && belowCenter.name !== 'sand'
+    const centerSolid = centerBlock && centerBlock.boundingBox === 'block' && centerBlock.name !== 'sand'
+    if (!belowSolid && centerSolid) safeY = center.y + 1
+
+    cfg.origin = origin
+    cfg.safePlatform = { x: center.x, y: safeY, z: center.z }
+
+    log(`Easy placement enabled: center=${center.x},${center.y},${center.z} size=${size}x${size} -> origin=${origin.x},${origin.y},${origin.z} safePlatform=${cfg.safePlatform.x},${cfg.safePlatform.y},${cfg.safePlatform.z}`)
   }
 
   const chooseScaffoldPos = (sandPos, xOffset) => sandPos.offset(xOffset, 0, 0)
@@ -355,6 +422,22 @@ function createBotEngine (config = validateConfig(loadConfig())) {
         (isBlockName(preferredString, 'tripwire') || isBlockName(oppositeString, 'tripwire'))
     } catch {
       return false
+    }
+  }
+
+
+
+  async function verifyCellPlacement (sandPos, scaffoldOffsetX) {
+    if (isCellCompleted(sandPos, scaffoldOffsetX)) return true
+    await sleepTicks(2)
+    return isCellCompleted(sandPos, scaffoldOffsetX)
+  }
+
+  async function recoverToCheckpointState ({ origin, checkpoint }) {
+    warn(`Recovery: navigating to safe platform and resuming from checkpoint layer=${checkpoint.layer}, cell=${checkpoint.cell}`)
+    await moveToSafePlatform()
+    if (checkpoint.layer < cfg.layers) {
+      await ensureVerticalSpine(origin, checkpoint.layer)
     }
   }
 
@@ -465,9 +548,12 @@ function createBotEngine (config = validateConfig(loadConfig())) {
   function setupSafetyHooks () {
     let lastY = null
     bot.on('physicsTick', () => {
-      if (isStopping) return
+      if (isStopping || !safetyHooksArmed) return
       const y = bot.entity.position.y
-      if (lastY != null && (lastY - y) > 1.01) safeStop(`Fall detected. drop=${(lastY - y).toFixed(2)} blocks`)
+      if (lastY != null && (lastY - y) > 1.01) {
+        const recovered = buildController.requestRecovery(`Fall detected. drop=${(lastY - y).toFixed(2)} blocks`)
+        if (!recovered) safeStop(`Fall detected. drop=${(lastY - y).toFixed(2)} blocks`)
+      }
       lastY = y
     })
   }
@@ -511,6 +597,8 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     buildGridTasks,
     ensureVerticalSpine,
     placeCactusStack,
+    verifyCellPlacement,
+    performRecovery: recoverToCheckpointState,
     onLog: entry => handleLogEntry(entry)
   })
 
@@ -565,7 +653,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     nextReconnectDelayMs = delay
     nextReconnectAt = Date.now() + delay
     log(`Lost connection (${reason}). Attempt ${reconnectAttempts}. Reconnecting in ${Math.floor(delay / 1000)}s`)
-    emitStatus()
+    setLifecycleState('reconnecting')
     setTimeout(() => {
       reconnectScheduled = false
       nextReconnectDelayMs = null
@@ -576,6 +664,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
 
   function registerBotEvents () {
     bot.once('login', () => {
+      setLifecycleState('login')
       reconnectAttempts = 0
       reconnectScheduled = false
       connectionStartedAt = Date.now()
@@ -584,11 +673,13 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     })
 
     bot.once('spawn', async () => {
+      setLifecycleState('spawned')
       reconnectAttempts = 0
       reconnectScheduled = false
       emitStatus()
 
       log('Spawned and connected. Waiting for start command...')
+      setLifecycleState('stabilizing')
       log(`Config: layers=${cfg.layers}, buildDelayTicks=${cfg.buildDelayTicks}, removeScaffold=${cfg.removeScaffold}`)
 
       try {
@@ -596,6 +687,10 @@ function createBotEngine (config = validateConfig(loadConfig())) {
         startLagMonitor()
         setupSafetyHooks()
         await enterSurvivalFromLobby()
+        setLifecycleState('ready')
+        resolveEasyPlacementFromPlayerPosition()
+        await bot.waitForTicks(30)
+        safetyHooksArmed = true
 
         if (!hasSolidFooting()) {
           warn('Bot spawned without solid non-sand footing. Fix position, then run start.')
@@ -606,6 +701,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     })
 
     bot.on('end', () => {
+      setLifecycleState('disconnected')
       log('Disconnected from server.')
       if (connectionStartedAt) lastUptimeMs = Date.now() - connectionStartedAt
       connectionStartedAt = null
@@ -614,6 +710,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     })
 
     bot.on('kicked', reason => {
+      setLifecycleState('kicked')
       reportError(`Kicked from server: ${reason}`)
       if (connectionStartedAt) lastUptimeMs = Date.now() - connectionStartedAt
       connectionStartedAt = null
@@ -622,15 +719,18 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     })
 
     bot.on('error', err => {
-      reportError(err.message)
+      setLifecycleState('error')
+      const message = formatErrorMessage(err)
+      reportError(message)
       if (connectionStartedAt) lastUptimeMs = Date.now() - connectionStartedAt
       connectionStartedAt = null
       emitStatus()
-      handleReconnect(`error: ${err.message}`)
+      handleReconnect(`error: ${message}`)
     })
   }
 
   function connect () {
+    setLifecycleState('connecting')
     if (bot) {
       try {
         bot.removeAllListeners()
@@ -647,6 +747,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     lastUptimeMs = null
     nextReconnectDelayMs = null
     nextReconnectAt = null
+    safetyHooksArmed = false
     checkpointManager.resetState()
     humanizer.reset()
     refillManager.reset()
@@ -657,11 +758,11 @@ function createBotEngine (config = validateConfig(loadConfig())) {
       username: cfg.username,
       password: cfg.password,
       auth: cfg.auth,
-      version: cfg.version || undefined
+      version: cfg.version === false ? undefined : cfg.version
     })
 
-    bot.loadPlugin(pathfinder)
     registerBotEvents()
+    bot.loadPlugin(pathfinder)
   }
 
   if (!statusInterval) statusInterval = setInterval(emitStatus, 1000)
@@ -686,17 +787,36 @@ function runCli () {
   engine.connect()
   const uiServer = startUiServer({ engine, cfg })
 
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
-  console.log('[CLI] Commands: start | pause | resume | stop | status | quit')
-  rl.on('line', async line => {
+  function handleRuntimeFailure (kind, err) {
+    const message = err && err.message ? err.message : String(err)
+    console.error(`[RUNTIME] ${kind}: ${message}`)
+    setTimeout(() => {
+      try {
+        console.log('[RUNTIME] Attempting recovery reconnect...')
+        engine.connect()
+      } catch (recoverErr) {
+        console.error(`[RUNTIME] Recovery reconnect failed: ${recoverErr.message || recoverErr}`)
+      }
+    }, 3000)
+  }
+
+  process.on('unhandledRejection', reason => handleRuntimeFailure('Unhandled rejection', reason))
+  process.on('uncaughtException', err => handleRuntimeFailure('Uncaught exception', err))
+
+  const desktopMode = process.env.MINEFARMBOT_DESKTOP === '1'
+  if (!desktopMode) {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
+    console.log('[CLI] Commands: start | pause | resume | stop | status | quit')
+    rl.on('line', async line => {
     const cmd = line.trim().toLowerCase()
     if (cmd === 'start') await engine.startBuild()
     else if (cmd === 'pause') engine.pauseBuild()
     else if (cmd === 'resume') engine.resumeBuild()
     else if (cmd === 'stop') engine.stopBuild()
     else if (cmd === 'status') console.log(engine.getStatus())
-    else if (cmd === 'quit' || cmd === 'exit') process.exit(0)
-  })
+      else if (cmd === 'quit' || cmd === 'exit') process.exit(0)
+    })
+  }
 
   process.on('SIGINT', () => {
     uiServer.close()

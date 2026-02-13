@@ -1,0 +1,24 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="32" y1="16" x2="224" y2="240" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1E2E48"/>
+      <stop offset="1" stop-color="#0D1521"/>
+    </linearGradient>
+    <linearGradient id="cactus" x1="128" y1="56" x2="128" y2="208" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#52E09C"/>
+      <stop offset="1" stop-color="#2E9E6D"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="16" y="16" width="224" height="224" rx="44" fill="url(#bg)"/>
+  <rect x="104" y="56" width="48" height="152" rx="20" fill="url(#cactus)"/>
+  <rect x="64" y="92" width="36" height="76" rx="16" fill="url(#cactus)"/>
+  <rect x="156" y="104" width="36" height="64" rx="16" fill="url(#cactus)"/>
+
+  <circle cx="120" cy="88" r="3" fill="#D8FFE8"/>
+  <circle cx="136" cy="112" r="3" fill="#D8FFE8"/>
+  <circle cx="114" cy="132" r="3" fill="#D8FFE8"/>
+  <circle cx="140" cy="156" r="3" fill="#D8FFE8"/>
+
+  <rect x="56" y="204" width="144" height="14" rx="7" fill="#8A6B43"/>
+</svg>
