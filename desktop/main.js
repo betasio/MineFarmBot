@@ -1,9 +1,10 @@
 'use strict'
 
 const { app, BrowserWindow, dialog, Tray, Menu, nativeImage, ipcMain, shell } = require('electron')
-const { spawn } = require('child_process')
+const { spawn, spawnSync } = require('child_process')
 const path = require('path')
 const fs = require('fs')
+const os = require('os')
 
 const { DEFAULT_CONFIG, validateConfig } = require('../config')
 const { PROFILE_SCHEMA_VERSION, migrateProfileFiles, writeJsonAtomic } = require('./profileMigrations')
@@ -15,6 +16,13 @@ let shutdownRequested = false
 let forceQuit = false
 let currentProfileId = null
 let lastLifecycleState = null
+let lastStatusSnapshot = null
+let lastMsaPromptCode = null
+
+const MAX_CAPTURED_BOT_LOG_LINES = 400
+const MAX_CAPTURED_EVENTS = 250
+const recentBotLogLines = []
+const recentUiServerEvents = []
 
 const statePath = path.join(app.getPath('userData'), 'window-state.json')
 const profilesDir = path.join(app.getPath('userData'), 'profiles')
@@ -154,12 +162,126 @@ function resolveGuiUrlFromProfile (profileId) {
 }
 
 function extractMsaCode (text) {
-  const codeMatch = text.match(/use the code\s+([A-Z0-9]+)/i)
-  const urlMatch = text.match(/https?:\/\/[^\s]+/i)
-  if (!codeMatch && !urlMatch) return null
+  const raw = String(text || '')
+  const normalized = raw.toLowerCase()
+
+  if (!normalized.includes('microsoft') && !normalized.includes('microsoft.com/link') && !normalized.includes('use the code')) {
+    return null
+  }
+
+  const explicitCodeMatch = raw.match(/use\s+the\s+code\s*([A-Z0-9]{6,})/i)
+  const otcCodeMatch = raw.match(/[?&]otc=([A-Z0-9]{6,})/i)
+  const code = (explicitCodeMatch && explicitCodeMatch[1]) || (otcCodeMatch && otcCodeMatch[1]) || null
+  const microsoftLinkMatch = raw.match(/https?:\/\/(?:www\.)?microsoft\.com\/link(?:\?[^\s]+)?/i)
+  const legacyLinkMatch = raw.match(/https?:\/\/microsoft\.com\/link(?:\?[^\s]+)?/i)
+  const url = (microsoftLinkMatch && microsoftLinkMatch[0]) || (legacyLinkMatch && legacyLinkMatch[0]) || 'https://www.microsoft.com/link'
+
+  if (!code && !microsoftLinkMatch && !legacyLinkMatch) return null
   return {
-    code: codeMatch ? codeMatch[1] : null,
-    url: urlMatch ? urlMatch[0] : 'https://www.microsoft.com/link'
+    code: code ? code.toUpperCase() : null,
+    url
+  }
+}
+
+function pushBounded (target, value, maxSize) {
+  target.push(value)
+  if (target.length > maxSize) target.splice(0, target.length - maxSize)
+}
+
+function redactSecrets (value) {
+  const text = String(value == null ? '' : value)
+  return text
+    .replace(/(use\s+the\s+code\s+)([A-Z0-9]{4,})/ig, '$1[REDACTED_DEVICE_CODE]')
+    .replace(/(code\s*[=:]\s*)([A-Z0-9]{4,})/ig, '$1[REDACTED_DEVICE_CODE]')
+    .replace(/\b([A-Fa-f0-9]{24,})\b/g, '[REDACTED_HEX_TOKEN]')
+    .replace(/\b(eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9._-]+\.[A-Za-z0-9._-]+)\b/g, '[REDACTED_JWT]')
+    .replace(/(access[_-]?token|refresh[_-]?token|password|secret|device[_-]?code)\s*[:=]\s*([^\s,;]+)/ig, '$1=[REDACTED]')
+}
+
+function sanitizeProfileMeta (meta) {
+  if (!meta || typeof meta !== 'object') return null
+  return {
+    id: meta.id,
+    name: meta.name,
+    auth: meta.auth,
+    host: meta.host,
+    usernameHint: meta.username ? `${String(meta.username).slice(0, 2)}***` : null,
+    createdAt: meta.createdAt,
+    updatedAt: meta.updatedAt,
+    schemaVersion: meta.schemaVersion
+  }
+}
+
+function summarizeState (status) {
+  if (!status || typeof status !== 'object') return null
+  return {
+    lifecycleState: status.lifecycleState || null,
+    connection: status.connection || null,
+    auth: status.auth || null,
+    build: status.build || null,
+    safety: status.safety || null,
+    updatedAt: Date.now()
+  }
+}
+
+function buildDiagnosticsPayload (profileId) {
+  const selectedProfileId = profileId || currentProfileId
+  const configPath = selectedProfileId ? profileConfigPath(selectedProfileId) : null
+  const checkpointPath = selectedProfileId ? profileCheckpointPath(selectedProfileId) : null
+  const metaPath = selectedProfileId ? profileMetaPath(selectedProfileId) : null
+  const rawMeta = selectedProfileId ? readProfileMeta(selectedProfileId) : null
+
+  return {
+    generatedAt: new Date().toISOString(),
+    app: {
+      name: app.getName(),
+      version: app.getVersion(),
+      electron: process.versions.electron,
+      node: process.versions.node,
+      chrome: process.versions.chrome,
+      platform: process.platform,
+      release: os.release(),
+      arch: process.arch
+    },
+    selectedProfile: {
+      requestedProfileId: profileId || null,
+      activeProfileId: currentProfileId || null,
+      effectiveProfileId: selectedProfileId || null,
+      meta: sanitizeProfileMeta(rawMeta),
+      paths: {
+        configPath,
+        configExists: Boolean(configPath && fs.existsSync(configPath)),
+        checkpointPath,
+        checkpointExists: Boolean(checkpointPath && fs.existsSync(checkpointPath)),
+        profileMetaPath: metaPath,
+        profileMetaExists: Boolean(metaPath && fs.existsSync(metaPath))
+      }
+    },
+    recentBotLogLines: recentBotLogLines.slice(),
+    recentUiServerEvents: recentUiServerEvents.slice(),
+    stateSummary: summarizeState(lastStatusSnapshot)
+  }
+}
+
+function writeDiagnosticsBundle (baseOutputPath, diagnosticsPayload) {
+  const jsonPath = baseOutputPath.endsWith('.json') ? baseOutputPath : `${baseOutputPath}.json`
+  fs.mkdirSync(path.dirname(jsonPath), { recursive: true })
+  fs.writeFileSync(jsonPath, JSON.stringify(diagnosticsPayload, null, 2), 'utf8')
+
+  const zipPath = jsonPath.replace(/\.json$/i, '.zip')
+  const zipRes = spawnSync('zip', ['-j', '-q', zipPath, jsonPath])
+  if (!zipRes.error && zipRes.status === 0 && fs.existsSync(zipPath)) {
+    return {
+      jsonPath,
+      zipPath,
+      zipFormat: 'zip'
+    }
+  }
+
+  return {
+    jsonPath,
+    zipPath: null,
+    zipFormat: null
   }
 }
 
@@ -183,15 +305,29 @@ function startBotProcess (profileId) {
   })
 
   lastLifecycleState = null
+  lastMsaPromptCode = null
 
   const onOutput = (prefix, chunk) => {
     const text = chunk.toString()
     process.stdout.write(`${prefix}${text}`)
+    const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+    for (const line of lines) {
+      pushBounded(recentBotLogLines, {
+        timestamp: Date.now(),
+        source: prefix.trim(),
+        line: redactSecrets(line)
+      }, MAX_CAPTURED_BOT_LOG_LINES)
+    }
 
-    const msa = extractMsaCode(text)
-    if (msa && mainWindow && !mainWindow.isDestroyed()) {
+    for (const line of lines) {
+      const msa = extractMsaCode(line)
+      if (!msa || !mainWindow || mainWindow.isDestroyed()) continue
+
       mainWindow.webContents.send('desktop:msa-code', msa)
-      shell.openExternal(msa.url).catch(() => {})
+      if (msa.code && msa.code !== lastMsaPromptCode) {
+        lastMsaPromptCode = msa.code
+        shell.openExternal(msa.url).catch(() => {})
+      }
     }
   }
 
@@ -205,8 +341,18 @@ function startBotProcess (profileId) {
     const payload = envelope.payload
     if (!channel || !['status', 'log', 'warning', 'error'].includes(channel)) return
 
+    pushBounded(recentUiServerEvents, {
+      timestamp: Date.now(),
+      channel,
+      payload: JSON.parse(JSON.stringify(payload == null ? null : payload, (_key, val) => {
+        if (typeof val === 'string') return redactSecrets(val)
+        return val
+      }))
+    }, MAX_CAPTURED_EVENTS)
+
     mainWindow.webContents.send(`desktop:${channel}`, payload)
     if (channel === 'status') {
+      lastStatusSnapshot = payload || null
       const lifecycleState = payload && payload.lifecycleState
       if (lifecycleState && lifecycleState !== lastLifecycleState) {
         const transition = {
@@ -460,17 +606,39 @@ const handleStopBot = async () => {
   return { ok: true }
 }
 
+const handleExportDiagnostics = async (_event, profileId) => {
+  try {
+    const fallbackName = `minefarmbot-diagnostics-${new Date().toISOString().replace(/[:.]/g, '-')}`
+    const saveRes = await dialog.showSaveDialog({
+      title: 'Export Diagnostics Bundle',
+      defaultPath: path.join(app.getPath('documents'), `${fallbackName}.json`),
+      filters: [
+        { name: 'JSON', extensions: ['json'] }
+      ]
+    })
+    if (saveRes.canceled || !saveRes.filePath) return { ok: false, canceled: true }
+
+    const payload = buildDiagnosticsPayload(profileId)
+    const written = writeDiagnosticsBundle(saveRes.filePath, payload)
+    return { ok: true, ...written }
+  } catch (err) {
+    return { ok: false, error: err.message || String(err) }
+  }
+}
+
 ipcMain.handle('desktop:listProfiles', handleListProfiles)
 ipcMain.handle('desktop:createProfile', handleCreateProfile)
 ipcMain.handle('desktop:launchProfile', handleLaunchProfile)
 ipcMain.handle('desktop:restartBot', handleRestartBot)
 ipcMain.handle('desktop:stopBot', handleStopBot)
+ipcMain.handle('desktop:exportDiagnostics', handleExportDiagnostics)
 
 ipcMain.handle('desktop:list-profiles', handleListProfiles)
 ipcMain.handle('desktop:create-profile', handleCreateProfile)
 ipcMain.handle('desktop:launch-profile', handleLaunchProfile)
 ipcMain.handle('desktop:restart-bot', handleRestartBot)
 ipcMain.handle('desktop:stop-bot', handleStopBot)
+ipcMain.handle('desktop:export-diagnostics', handleExportDiagnostics)
 
 app.whenReady().then(async () => {
   shutdownRequested = false
@@ -508,7 +676,9 @@ if (process.env.NODE_ENV === 'test') {
       stopBotProcess,
       restartBotProcess,
       listProfiles,
-      createProfile
+      createProfile,
+      buildDiagnosticsPayload,
+      redactSecrets
     }
   }
 }

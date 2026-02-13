@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('minefarmDesktop', {
   createProfile: (payload) => ipcRenderer.invoke('desktop:create-profile', payload),
   launchProfile: (profileId) => ipcRenderer.invoke('desktop:launch-profile', profileId),
   stopBot: () => ipcRenderer.invoke('desktop:stop-bot'),
+  exportDiagnostics: (profileId) => ipcRenderer.invoke('desktop:export-diagnostics', profileId),
   onStatus: (handler) => {
     const listener = (_event, payload) => handler(payload)
     ipcRenderer.on('desktop:status', listener)
