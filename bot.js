@@ -866,17 +866,20 @@ function runCli () {
   process.on('unhandledRejection', reason => handleRuntimeFailure('Unhandled rejection', reason))
   process.on('uncaughtException', err => handleRuntimeFailure('Uncaught exception', err))
 
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
-  console.log('[CLI] Commands: start | pause | resume | stop | status | quit')
-  rl.on('line', async line => {
+  const desktopMode = process.env.MINEFARMBOT_DESKTOP === '1'
+  if (!desktopMode) {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
+    console.log('[CLI] Commands: start | pause | resume | stop | status | quit')
+    rl.on('line', async line => {
     const cmd = line.trim().toLowerCase()
     if (cmd === 'start') await engine.startBuild()
     else if (cmd === 'pause') engine.pauseBuild()
     else if (cmd === 'resume') engine.resumeBuild()
     else if (cmd === 'stop') engine.stopBuild()
     else if (cmd === 'status') console.log(engine.getStatus())
-    else if (cmd === 'quit' || cmd === 'exit') process.exit(0)
-  })
+      else if (cmd === 'quit' || cmd === 'exit') process.exit(0)
+    })
+  }
 
   process.on('SIGINT', () => {
     uiServer.close()

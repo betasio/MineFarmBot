@@ -63,6 +63,14 @@ Desktop runtime features:
 - remembers last window size/position
 - minimize-to-tray behavior
 - in-app "Restart Bot" button (desktop mode only)
+- Desktop Launcher for creating/selecting multiple bot profiles
+
+Desktop Launcher workflow:
+1. Run `npm run start:desktop`.
+2. Create one or more bot profiles (name, auth mode, identity, server).
+3. Launch profile from launcher list.
+4. Microsoft auth prompts are surfaced in app and browser opens automatically when code is issued.
+5. Each profile has isolated `config.json` and `build-checkpoint.json` under desktop user-data profiles.
 
 
 1. Install Node.js 18+.

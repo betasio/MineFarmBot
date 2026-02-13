@@ -1,27 +1,255 @@
 'use strict'
 
-const { app, BrowserWindow, dialog, Tray, Menu, nativeImage, ipcMain } = require('electron')
+const { app, BrowserWindow, dialog, Tray, Menu, nativeImage, ipcMain, shell } = require('electron')
 const { spawn } = require('child_process')
 const path = require('path')
 const fs = require('fs')
 
-const { loadConfig, validateConfig } = require('../config')
+const { DEFAULT_CONFIG, validateConfig } = require('../config')
 
 let mainWindow = null
 let botProcess = null
 let tray = null
 let shutdownRequested = false
 let forceQuit = false
+let currentProfileId = null
 
 const statePath = path.join(app.getPath('userData'), 'window-state.json')
+const profilesDir = path.join(app.getPath('userData'), 'profiles')
 const iconPath = path.join(__dirname, 'assets', 'icon.svg')
+const launcherPath = path.join(__dirname, 'launcher.html')
 
-function resolveGuiUrl () {
-  const cfg = validateConfig(loadConfig())
-  const host = (cfg.gui && cfg.gui.host) || '127.0.0.1'
-  const port = (cfg.gui && cfg.gui.port) || 8787
+function ensureProfilesDir () {
+  fs.mkdirSync(profilesDir, { recursive: true })
+}
+
+function profileDir (profileId) {
+  return path.join(profilesDir, profileId)
+}
+
+function profileConfigPath (profileId) {
+  return path.join(profileDir(profileId), 'config.json')
+}
+
+function profileCheckpointPath (profileId) {
+  return path.join(profileDir(profileId), 'build-checkpoint.json')
+}
+
+function profileMetaPath (profileId) {
+  return path.join(profileDir(profileId), 'profile.json')
+}
+
+function slugify (value) {
+  return String(value || 'bot').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'bot'
+}
+
+function readProfileMeta (profileId) {
+  const metaFile = profileMetaPath(profileId)
+  if (!fs.existsSync(metaFile)) return null
+  try {
+    return JSON.parse(fs.readFileSync(metaFile, 'utf8'))
+  } catch {
+    return null
+  }
+}
+
+function listProfiles () {
+  ensureProfilesDir()
+  const entries = fs.readdirSync(profilesDir, { withFileTypes: true })
+    .filter(entry => entry.isDirectory())
+    .map(entry => {
+      const id = entry.name
+      const meta = readProfileMeta(id) || { id, name: id, auth: 'microsoft', createdAt: Date.now(), updatedAt: Date.now() }
+      const checkpointFile = profileCheckpointPath(id)
+      let checkpoint = null
+      if (fs.existsSync(checkpointFile)) {
+        try {
+          checkpoint = JSON.parse(fs.readFileSync(checkpointFile, 'utf8'))
+        } catch {}
+      }
+      return {
+        id,
+        name: meta.name,
+        auth: meta.auth,
+        createdAt: meta.createdAt,
+        updatedAt: meta.updatedAt,
+        host: meta.host,
+        username: meta.username,
+        checkpoint
+      }
+    })
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+
+  return entries
+}
+
+function createProfile (payload) {
+  const now = Date.now()
+  const profileName = String(payload && payload.name ? payload.name : '').trim()
+  if (!profileName) throw new Error('Profile name is required')
+
+  const idBase = slugify(profileName)
+  const id = `${idBase}-${now.toString(36)}`
+  const dir = profileDir(id)
+  fs.mkdirSync(dir, { recursive: true })
+
+  const auth = String(payload && payload.auth ? payload.auth : 'microsoft').toLowerCase() === 'offline' ? 'offline' : 'microsoft'
+  const identity = String(payload && payload.identity ? payload.identity : '').trim()
+  if (!identity) throw new Error(auth === 'offline' ? 'Offline username is required' : 'Microsoft email is required')
+
+  const host = String(payload && payload.host ? payload.host : '').trim()
+  if (!host) throw new Error('Server host is required')
+
+  const base = validateConfig(DEFAULT_CONFIG)
+  const config = validateConfig({
+    ...base,
+    auth,
+    username: identity,
+    host,
+    port: Number(payload && payload.port ? payload.port : base.port),
+    gui: {
+      ...base.gui,
+      host: '127.0.0.1',
+      port: Number(payload && payload.guiPort ? payload.guiPort : base.gui.port)
+    }
+  })
+
+  fs.writeFileSync(profileConfigPath(id), `${JSON.stringify(config, null, 2)}\n`, 'utf8')
+  fs.writeFileSync(profileMetaPath(id), JSON.stringify({
+    id,
+    name: profileName,
+    auth,
+    host: config.host,
+    username: config.username,
+    createdAt: now,
+    updatedAt: now
+  }, null, 2), 'utf8')
+
+  return { id, name: profileName }
+}
+
+function resolveGuiUrlFromProfile (profileId) {
+  const config = validateConfig(JSON.parse(fs.readFileSync(profileConfigPath(profileId), 'utf8')))
+  const host = (config.gui && config.gui.host) || '127.0.0.1'
+  const port = (config.gui && config.gui.port) || 8787
   const uiHost = host === '0.0.0.0' || host === '::' ? '127.0.0.1' : host
   return `http://${uiHost}:${port}`
+}
+
+function parseMsaPrompt (text) {
+  const codeMatch = text.match(/use the code\s+([A-Z0-9]+)/i)
+  const urlMatch = text.match(/https?:\/\/[^\s]+/i)
+  if (!codeMatch && !urlMatch) return null
+  return {
+    code: codeMatch ? codeMatch[1] : null,
+    url: urlMatch ? urlMatch[0] : 'https://www.microsoft.com/link'
+  }
+}
+
+function startBotProcess (profileId) {
+  const botEntry = path.join(__dirname, '..', 'bot.js')
+  const cfgPath = profileConfigPath(profileId)
+  const checkpointPath = profileCheckpointPath(profileId)
+
+  botProcess = spawn(process.execPath, [botEntry], {
+    cwd: path.join(__dirname, '..'),
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: '1',
+      MINEFARMBOT_DESKTOP: '1',
+      BOT_CONFIG_PATH: cfgPath,
+      BOT_CHECKPOINT_PATH: checkpointPath
+    }
+  })
+
+  const onOutput = (prefix, chunk) => {
+    const text = chunk.toString()
+    process.stdout.write(`${prefix}${text}`)
+
+    const msa = parseMsaPrompt(text)
+    if (msa && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('desktop:msa-code', msa)
+      shell.openExternal(msa.url).catch(() => {})
+    }
+  }
+
+  botProcess.stdout.on('data', chunk => onOutput('[BOT] ', chunk))
+  botProcess.stderr.on('data', chunk => onOutput('[BOT:ERR] ', chunk))
+
+  botProcess.on('exit', (code, signal) => {
+    const crashed = !shutdownRequested
+    botProcess = null
+
+    if (crashed) {
+      const reason = signal ? `signal ${signal}` : `exit code ${code}`
+      dialog.showErrorBox('MineFarmBot stopped unexpectedly', `Bot process terminated with ${reason}.`)
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        loadLauncher().catch(() => {})
+      }
+    }
+  })
+}
+
+function stopBotProcess () {
+  shutdownRequested = true
+  if (!botProcess) return
+  try {
+    botProcess.kill('SIGINT')
+  } catch {}
+}
+
+async function restartBotProcess () {
+  if (!currentProfileId) throw new Error('No active profile to restart')
+  stopBotProcess()
+  await new Promise(resolve => setTimeout(resolve, 1200))
+  shutdownRequested = false
+  startBotProcess(currentProfileId)
+  await loadGuiWhenReady(currentProfileId)
+  return { ok: true }
+}
+
+async function launchProfile (profileId) {
+  if (!profileId) throw new Error('Profile id is required')
+  if (!fs.existsSync(profileConfigPath(profileId))) throw new Error('Profile config not found')
+
+  currentProfileId = profileId
+  stopBotProcess()
+  await new Promise(resolve => setTimeout(resolve, 1000))
+
+  shutdownRequested = false
+  startBotProcess(profileId)
+  await loadGuiWhenReady(profileId)
+
+  const meta = readProfileMeta(profileId)
+  if (meta) {
+    meta.updatedAt = Date.now()
+    fs.writeFileSync(profileMetaPath(profileId), JSON.stringify(meta, null, 2), 'utf8')
+  }
+
+  return { ok: true }
+}
+
+async function loadGuiWhenReady (profileId) {
+  const url = resolveGuiUrlFromProfile(profileId)
+  const deadline = Date.now() + 30000
+
+  while (Date.now() < deadline) {
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    try {
+      await mainWindow.loadURL(url)
+      return
+    } catch {
+      await new Promise(resolve => setTimeout(resolve, 500))
+    }
+  }
+
+  dialog.showErrorBox('GUI failed to load', `Could not connect to ${url} within timeout. Ensure bot GUI transport is enabled.`)
+}
+
+async function loadLauncher () {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  await mainWindow.loadFile(launcherPath)
 }
 
 function loadWindowState () {
@@ -56,8 +284,7 @@ function getAppIcon () {
 }
 
 function createTray () {
-  const trayIcon = getAppIcon()
-  tray = new Tray(trayIcon)
+  tray = new Tray(getAppIcon())
   tray.setToolTip('MineFarmBot')
   tray.setContextMenu(Menu.buildFromTemplate([
     {
@@ -71,10 +298,14 @@ function createTray () {
     },
     {
       label: 'Restart Bot Process',
+      click: () => restartBotProcess().catch(err => dialog.showErrorBox('Restart failed', err.message || String(err)))
+    },
+    {
+      label: 'Back to Bot Launcher',
       click: () => {
-        restartBotProcess().catch(err => {
-          dialog.showErrorBox('Restart failed', err.message || String(err))
-        })
+        stopBotProcess()
+        currentProfileId = null
+        loadLauncher().catch(() => {})
       }
     },
     {
@@ -135,70 +366,6 @@ function createWindow () {
   })
 }
 
-function startBotProcess () {
-  const botEntry = path.join(__dirname, '..', 'bot.js')
-  botProcess = spawn(process.execPath, [botEntry], {
-    cwd: path.join(__dirname, '..'),
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env: {
-      ...process.env,
-      ELECTRON_RUN_AS_NODE: '1'
-    }
-  })
-
-  botProcess.stdout.on('data', chunk => process.stdout.write(`[BOT] ${chunk}`))
-  botProcess.stderr.on('data', chunk => process.stderr.write(`[BOT:ERR] ${chunk}`))
-
-  botProcess.on('exit', (code, signal) => {
-    const crashed = !shutdownRequested
-    botProcess = null
-
-    if (crashed) {
-      const reason = signal ? `signal ${signal}` : `exit code ${code}`
-      dialog.showErrorBox('MineFarmBot stopped unexpectedly', `Bot process terminated with ${reason}.`)
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.executeJavaScript(
-          "document.body.innerHTML = '<div style=\"font-family:sans-serif;padding:20px;color:#fff;background:#1a2230\"><h2>Bot stopped unexpectedly</h2><p>Check terminal logs for details and restart the app.</p></div>'"
-        ).catch(() => {})
-      }
-    }
-  })
-}
-
-function stopBotProcess () {
-  shutdownRequested = true
-  if (!botProcess) return
-  try {
-    botProcess.kill('SIGINT')
-  } catch {}
-}
-
-async function restartBotProcess () {
-  stopBotProcess()
-  await new Promise(resolve => setTimeout(resolve, 1200))
-  shutdownRequested = false
-  startBotProcess()
-  await loadGuiWhenReady()
-  return { ok: true }
-}
-
-async function loadGuiWhenReady () {
-  const url = resolveGuiUrl()
-  const deadline = Date.now() + 30000
-
-  while (Date.now() < deadline) {
-    if (!mainWindow || mainWindow.isDestroyed()) return
-    try {
-      await mainWindow.loadURL(url)
-      return
-    } catch {
-      await new Promise(resolve => setTimeout(resolve, 500))
-    }
-  }
-
-  dialog.showErrorBox('GUI failed to load', `Could not connect to ${url} within timeout. Ensure bot GUI transport is enabled.`)
-}
-
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
 if (!gotSingleInstanceLock) {
   app.quit()
@@ -212,6 +379,23 @@ if (!gotSingleInstanceLock) {
   })
 }
 
+ipcMain.handle('desktop:list-profiles', async () => ({ ok: true, profiles: listProfiles() }))
+ipcMain.handle('desktop:create-profile', async (_event, payload) => {
+  try {
+    const created = createProfile(payload || {})
+    return { ok: true, profile: created, profiles: listProfiles() }
+  } catch (err) {
+    return { ok: false, error: err.message || String(err) }
+  }
+})
+ipcMain.handle('desktop:launch-profile', async (_event, profileId) => {
+  try {
+    await launchProfile(profileId)
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err.message || String(err) }
+  }
+})
 ipcMain.handle('desktop:restart-bot', async () => {
   try {
     await restartBotProcess()
@@ -220,14 +404,20 @@ ipcMain.handle('desktop:restart-bot', async () => {
     return { ok: false, error: err.message || String(err) }
   }
 })
+ipcMain.handle('desktop:stop-bot', async () => {
+  stopBotProcess()
+  currentProfileId = null
+  await loadLauncher()
+  return { ok: true }
+})
 
 app.whenReady().then(async () => {
   shutdownRequested = false
   forceQuit = false
+  ensureProfilesDir()
   createWindow()
   createTray()
-  startBotProcess()
-  await loadGuiWhenReady()
+  await loadLauncher()
 })
 
 app.on('before-quit', () => {

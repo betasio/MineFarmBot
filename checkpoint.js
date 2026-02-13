@@ -3,8 +3,15 @@
 const fs = require('fs')
 const path = require('path')
 
+function resolveCheckpointPath () {
+  if (process.env.BOT_CHECKPOINT_PATH && process.env.BOT_CHECKPOINT_PATH.trim().length > 0) {
+    return process.env.BOT_CHECKPOINT_PATH.trim()
+  }
+  return path.join(process.cwd(), 'build-checkpoint.json')
+}
+
 function createCheckpointManager (cfgLayers) {
-  const checkpointPath = path.join(process.cwd(), 'build-checkpoint.json')
+  const checkpointPath = resolveCheckpointPath()
   const checkpointTempPath = `${checkpointPath}.tmp`
 
   function normalizeCheckpoint (parsed) {
@@ -31,6 +38,7 @@ function createCheckpointManager (cfgLayers) {
   function saveCheckpoint (layer, cell) {
     const payload = JSON.stringify({ layer, cell, updatedAt: Date.now() }, null, 2)
     try {
+      fs.mkdirSync(path.dirname(checkpointPath), { recursive: true })
       fs.writeFileSync(checkpointTempPath, payload, 'utf8')
       fs.renameSync(checkpointTempPath, checkpointPath)
     } catch (err) {
