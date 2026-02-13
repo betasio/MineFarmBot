@@ -45,6 +45,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
   let nextReconnectAt = null
   let nextReconnectDelayMs = null
   let safetyHooksArmed = false
+  let lifecycleState = 'idle'
 
   const listeners = {
     log: new Set(),
@@ -153,84 +154,10 @@ function createBotEngine (config = validateConfig(loadConfig())) {
   }
 
   function setLifecycleState (nextState) {
-    if (!Object.values(LIFECYCLE_STATES).includes(nextState)) return false
     if (lifecycleState === nextState) return false
     lifecycleState = nextState
     emitStatus()
     return true
-  }
-
-  function isAuthRequiredReason (value) {
-    const text = String(value || '').toLowerCase()
-    return text.includes('microsoft.com/link') || text.includes('device code') || text.includes('invalid credentials')
-  }
-
-  function getMovementStatus () {
-    if (!bot || !bot.entity || !bot.entity.velocity) {
-      return { onGround: null, velocityY: null, isFalling: null }
-    }
-
-    const velocityY = bot.entity.velocity.y
-    const onGround = typeof bot.entity.onGround === 'boolean' ? bot.entity.onGround : null
-    return {
-      onGround,
-      velocityY,
-      isFalling: Boolean(!onGround && velocityY < -0.08)
-    }
-  }
-
-  function normalizeLookAtDescriptor () {
-    if (!bot) return null
-
-    try {
-      if (typeof bot.blockAtCursor === 'function') {
-        const block = bot.blockAtCursor(6)
-        if (block && block.position) {
-          return {
-            type: 'block',
-            name: block.displayName || block.name || 'unknown',
-            position: { x: block.position.x, y: block.position.y, z: block.position.z }
-          }
-        }
-      }
-
-      if (typeof bot.entityAtCursor === 'function') {
-        const entity = bot.entityAtCursor(6)
-        if (entity && entity.position) {
-          return {
-            type: 'entity',
-            name: entity.displayName || entity.username || entity.name || entity.type || 'unknown',
-            position: { x: entity.position.x, y: entity.position.y, z: entity.position.z }
-          }
-        }
-      }
-    } catch {
-      return null
-    }
-
-    return null
-  }
-
-  function isPathingActive () {
-    if (!bot || !bot.pathfinder) return false
-    if (typeof bot.pathfinder.isMoving === 'function') return bot.pathfinder.isMoving()
-    return false
-  }
-
-  function getPauseReason (build, refill) {
-    if (reconnectScheduled) return null
-    if (build && build.pauseReason) return build.pauseReason
-    if (refill && refill.needsRefill) return 'materials low; waiting for refill'
-    return null
-  }
-
-  function getBotMode (build, refill) {
-    if (reconnectScheduled) return 'reconnecting'
-    if (build && (build.state === 'paused' || build.state === 'stopping')) return 'paused'
-    if (build && build.state === 'running') return 'building'
-    if (refill && refill.needsRefill) return 'refilling'
-    if (isPathingActive()) return 'pathing'
-    return 'idle'
   }
 
   function getStatusPayload () {
@@ -260,15 +187,6 @@ function createBotEngine (config = validateConfig(loadConfig())) {
       reconnectDelayMs: nextReconnectDelayMs,
       reconnectAt: nextReconnectAt,
       lifecycleState,
-      retry: {
-        scheduled: reconnectScheduled,
-        attempt: reconnectAttempts,
-        delayMs: nextReconnectDelayMs,
-        reconnectAt: nextReconnectAt,
-        windowStartedAt: reconnectWindowStartedAt,
-        windowEndsAt: reconnectWindowEndsAt,
-        remainingWindowMs: reconnectWindowEndsAt ? Math.max(reconnectWindowEndsAt - Date.now(), 0) : null
-      },
       position,
       movement,
       lookAt,
@@ -810,6 +728,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     nextReconnectAt = Date.now() + delay
     setLifecycleState(LIFECYCLE_STATES.RECONNECTING)
     log(`Lost connection (${reason}). Attempt ${reconnectAttempts}. Reconnecting in ${Math.floor(delay / 1000)}s`)
+    setLifecycleState('reconnecting')
     setTimeout(() => {
       reconnectScheduled = false
       nextReconnectDelayMs = null
@@ -821,6 +740,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
 
   function registerBotEvents () {
     bot.once('login', () => {
+      setLifecycleState('login')
       reconnectAttempts = 0
       reconnectScheduled = false
       reconnectWindowStartedAt = null
@@ -832,6 +752,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     })
 
     bot.once('spawn', async () => {
+      setLifecycleState('spawned')
       reconnectAttempts = 0
       reconnectScheduled = false
       reconnectWindowStartedAt = null
@@ -840,6 +761,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
       emitStatus()
 
       log('Spawned and connected. Waiting for start command...')
+      setLifecycleState('stabilizing')
       log(`Config: layers=${cfg.layers}, buildDelayTicks=${cfg.buildDelayTicks}, removeScaffold=${cfg.removeScaffold}`)
 
       try {
@@ -847,6 +769,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
         startLagMonitor()
         setupSafetyHooks()
         await enterSurvivalFromLobby()
+        setLifecycleState('ready')
         resolveEasyPlacementFromPlayerPosition()
         await bot.waitForTicks(30)
         safetyHooksArmed = true
@@ -860,6 +783,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     })
 
     bot.on('end', () => {
+      setLifecycleState('disconnected')
       log('Disconnected from server.')
       if (connectionStartedAt) lastUptimeMs = Date.now() - connectionStartedAt
       connectionStartedAt = null
@@ -868,6 +792,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     })
 
     bot.on('kicked', reason => {
+      setLifecycleState('kicked')
       reportError(`Kicked from server: ${reason}`)
       if (connectionStartedAt) lastUptimeMs = Date.now() - connectionStartedAt
       connectionStartedAt = null
@@ -876,6 +801,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     })
 
     bot.on('error', err => {
+      setLifecycleState('error')
       const message = formatErrorMessage(err)
       reportError(message)
       if (connectionStartedAt) lastUptimeMs = Date.now() - connectionStartedAt
@@ -886,6 +812,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
   }
 
   function connect () {
+    setLifecycleState('connecting')
     if (bot) {
       try {
         bot.removeAllListeners()
