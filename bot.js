@@ -176,6 +176,18 @@ function createBotEngine (config = validateConfig(loadConfig())) {
   }
 
 
+
+  function getBotMode () {
+    const state = buildStatus && typeof buildStatus.state === 'string'
+      ? buildStatus.state.toLowerCase()
+      : 'idle'
+    if (state === 'running') return 'building'
+    if (state === 'paused') return 'paused'
+    if (state === 'recovering') return 'recovering'
+    if (state === 'stopped') return 'stopped'
+    return 'idle'
+  }
+
   function getMovementStatus () {
     if (!bot || !bot.entity || !bot.entity.velocity) {
       return {
@@ -209,6 +221,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     const uptimeMs = connectionStartedAt ? (Date.now() - connectionStartedAt) : lastUptimeMs
     const lookAt = normalizeLookAtDescriptor()
     const movement = getMovementStatus()
+    const botMode = getBotMode()
     return {
       connectionState: getConnectionState(),
       connected,
@@ -227,6 +240,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
       lifecycleState,
       lookAt,
       movement,
+      botMode,
       position,
       movement,
       lookAt,
