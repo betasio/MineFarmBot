@@ -88,6 +88,7 @@ Redaction behavior in exported logs/events:
 - Token-like hex/JWT strings are masked (`[REDACTED_HEX_TOKEN]`, `[REDACTED_JWT]`).
 - Common secret assignments (`access_token`, `refresh_token`, `password`, `secret`, `device_code`) are replaced with `[REDACTED]`.
 - Profile username in metadata is reduced to a short hint (`ab***`) instead of the full value.
+- If desktop startup fails with `SyntaxError: missing ) after argument list` in `desktop/main.js`, ensure you are on the latest repository revision/branch (older downloaded snapshots may contain stale launcher parser code).
 
 Forward compatibility for desktop profiles:
 - Launcher-managed `profile.json` metadata and per-profile `config.json` include a `schemaVersion` field.
