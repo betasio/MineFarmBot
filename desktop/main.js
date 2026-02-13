@@ -7,6 +7,7 @@ const fs = require('fs')
 const os = require('os')
 
 const { DEFAULT_CONFIG, validateConfig } = require('../config')
+const { PROFILE_SCHEMA_VERSION, migrateProfileFiles, writeJsonAtomic } = require('./profileMigrations')
 
 let mainWindow = null
 let botProcess = null
@@ -62,13 +63,24 @@ function readProfileMeta (profileId) {
   }
 }
 
+function migrateProfile (profileId) {
+  return migrateProfileFiles({
+    profileId,
+    metaPath: profileMetaPath(profileId),
+    configPath: profileConfigPath(profileId),
+    defaultConfig: DEFAULT_CONFIG,
+    validateConfig
+  })
+}
+
 function listProfiles () {
   ensureProfilesDir()
   const entries = fs.readdirSync(profilesDir, { withFileTypes: true })
     .filter(entry => entry.isDirectory())
     .map(entry => {
       const id = entry.name
-      const meta = readProfileMeta(id) || { id, name: id, auth: 'microsoft', createdAt: Date.now(), updatedAt: Date.now() }
+      const migrated = migrateProfile(id)
+      const meta = migrated.meta || { schemaVersion: PROFILE_SCHEMA_VERSION, id, name: id, auth: 'microsoft', createdAt: Date.now(), updatedAt: Date.now() }
       const checkpointFile = profileCheckpointPath(id)
       let checkpoint = null
       if (fs.existsSync(checkpointFile)) {
@@ -123,8 +135,12 @@ function createProfile (payload) {
     }
   })
 
-  fs.writeFileSync(profileConfigPath(id), `${JSON.stringify(config, null, 2)}\n`, 'utf8')
-  fs.writeFileSync(profileMetaPath(id), JSON.stringify({
+  writeJsonAtomic(profileConfigPath(id), {
+    ...config,
+    schemaVersion: PROFILE_SCHEMA_VERSION
+  })
+  writeJsonAtomic(profileMetaPath(id), {
+    schemaVersion: PROFILE_SCHEMA_VERSION,
     id,
     name: profileName,
     auth,
@@ -132,7 +148,7 @@ function createProfile (payload) {
     username: config.username,
     createdAt: now,
     updatedAt: now
-  }, null, 2), 'utf8')
+  })
 
   return { id, name: profileName }
 }
@@ -182,7 +198,6 @@ function extractMsaCode (text) {
     url: isMicrosoftLink ? url : 'https://www.microsoft.com/link'
   }
 }
-
 
 function pushBounded (target, value, maxSize) {
   target.push(value)
@@ -291,16 +306,18 @@ function startBotProcess (profileId) {
   const cfgPath = profileConfigPath(profileId)
   const checkpointPath = profileCheckpointPath(profileId)
 
+  const botSpawnEnv = {
+    ...process.env,
+    ELECTRON_RUN_AS_NODE: '1',
+    MINEFARMBOT_DESKTOP: '1',
+    BOT_CONFIG_PATH: cfgPath,
+    BOT_CHECKPOINT_PATH: checkpointPath
+  }
+
   botProcess = spawn(process.execPath, [botEntry], {
     cwd: path.join(__dirname, '..'),
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env: {
-      ...process.env,
-      ELECTRON_RUN_AS_NODE: '1',
-      MINEFARMBOT_DESKTOP: '1',
-      BOT_CONFIG_PATH: cfgPath,
-      BOT_CHECKPOINT_PATH: checkpointPath
-    }
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+    env: botSpawnEnv
   })
 
   lastLifecycleState = null
@@ -382,6 +399,7 @@ function startBotProcess (profileId) {
 
 function stopBotProcess () {
   shutdownRequested = true
+  lastLifecycleState = null
   if (!botProcess) return
   try {
     botProcess.kill('SIGINT')
@@ -400,6 +418,7 @@ async function restartBotProcess () {
 
 async function launchProfile (profileId) {
   if (!profileId) throw new Error('Profile id is required')
+  migrateProfile(profileId)
   if (!fs.existsSync(profileConfigPath(profileId))) throw new Error('Profile config not found')
 
   currentProfileId = profileId
@@ -413,7 +432,10 @@ async function launchProfile (profileId) {
   const meta = readProfileMeta(profileId)
   if (meta) {
     meta.updatedAt = Date.now()
-    fs.writeFileSync(profileMetaPath(profileId), JSON.stringify(meta, null, 2), 'utf8')
+    writeJsonAtomic(profileMetaPath(profileId), {
+      ...meta,
+      schemaVersion: PROFILE_SCHEMA_VERSION
+    })
   }
 
   return { ok: true }
@@ -421,43 +443,19 @@ async function launchProfile (profileId) {
 
 async function loadGuiWhenReady (profileId) {
   const url = resolveGuiUrlFromProfile(profileId)
-  const deadline = Date.now() + 90000
+  const deadline = Date.now() + 30000
 
   while (Date.now() < deadline) {
     if (!mainWindow || mainWindow.isDestroyed()) return
     try {
-      await probeGui(url)
-      break
+      await mainWindow.loadURL(url)
+      return
     } catch {
-      await new Promise(resolve => setTimeout(resolve, 350))
+      await new Promise(resolve => setTimeout(resolve, 500))
     }
   }
 
-  if (!mainWindow || mainWindow.isDestroyed()) return
-
-  try {
-    await mainWindow.loadURL(url)
-    return
-  } catch {}
-
   dialog.showErrorBox('GUI failed to load', `Could not connect to ${url} within timeout. Ensure bot GUI transport is enabled.`)
-}
-
-function probeGui (baseUrl) {
-  return new Promise((resolve, reject) => {
-    const req = http.get(`${baseUrl}/status`, { timeout: 1000 }, (res) => {
-      if (res.statusCode && res.statusCode >= 200 && res.statusCode < 500) {
-        res.resume()
-        resolve()
-        return
-      }
-      res.resume()
-      reject(new Error(`status ${res.statusCode || 'unknown'}`))
-    })
-
-    req.on('timeout', () => req.destroy(new Error('timeout')))
-    req.on('error', reject)
-  })
 }
 
 async function loadLauncher () {
@@ -592,32 +590,32 @@ if (!gotSingleInstanceLock) {
   })
 }
 
-ipcMain.handle('desktop:list-profiles', async () => ({ ok: true, profiles: listProfiles() }))
-ipcMain.handle('desktop:create-profile', async (_event, payload) => {
+const handleListProfiles = async () => ({ ok: true, profiles: listProfiles() })
+const handleCreateProfile = async (_event, payload) => {
   try {
     const created = createProfile(payload || {})
     return { ok: true, profile: created, profiles: listProfiles() }
   } catch (err) {
     return { ok: false, error: err.message || String(err) }
   }
-})
-ipcMain.handle('desktop:launch-profile', async (_event, profileId) => {
+}
+const handleLaunchProfile = async (_event, profileId) => {
   try {
     await launchProfile(profileId)
     return { ok: true }
   } catch (err) {
     return { ok: false, error: err.message || String(err) }
   }
-})
-ipcMain.handle('desktop:restart-bot', async () => {
+}
+const handleRestartBot = async () => {
   try {
     await restartBotProcess()
     return { ok: true }
   } catch (err) {
     return { ok: false, error: err.message || String(err) }
   }
-})
-ipcMain.handle('desktop:stop-bot', async () => {
+}
+const handleStopBot = async () => {
   stopBotProcess()
   currentProfileId = null
   await loadLauncher()
