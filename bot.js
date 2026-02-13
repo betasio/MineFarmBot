@@ -852,7 +852,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
       reportError(message)
       if (connectionStartedAt) lastUptimeMs = Date.now() - connectionStartedAt
       connectionStartedAt = null
-      setLifecycleState(isAuthRequiredReason(message) ? LIFECYCLE_STATES.AUTH_REQUIRED : LIFECYCLE_STATES.ERROR)
+      emitStatus()
       handleReconnect(`error: ${message}`)
     })
   }
@@ -935,15 +935,6 @@ function runCli () {
   process.on('uncaughtException', err => handleRuntimeFailure('Uncaught exception', err))
 
   const desktopMode = process.env.MINEFARMBOT_DESKTOP === '1'
-  if (desktopMode && typeof process.send === 'function') {
-    const send = (channel, payload) => {
-      try { process.send({ channel, payload }) } catch {}
-    }
-    engine.onStatus(payload => send('status', payload))
-    engine.onLog(payload => send('log', payload))
-    engine.onWarning(payload => send('warning', payload))
-    engine.onError(payload => send('error', payload))
-  }
   if (!desktopMode) {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
     console.log('[CLI] Commands: start | pause | resume | stop | status | quit')
