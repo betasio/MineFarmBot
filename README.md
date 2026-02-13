@@ -72,29 +72,6 @@ Desktop Launcher workflow:
 4. Microsoft auth prompts are surfaced in app and browser opens automatically when code is issued.
 5. Each profile has isolated `config.json` and `build-checkpoint.json` under desktop user-data profiles.
 
-### Desktop troubleshooting: diagnostics export
-
-Use **Export Active Diagnostics** (or a profile card's **Export Diagnostics**) in the desktop launcher to write a diagnostics bundle for support/debugging.
-
-The export writes:
-- A `.json` diagnostics file with app/runtime metadata (app version, platform, Node/Electron versions).
-- Selected profile metadata (sanitized), profile config/checkpoint/meta paths, and file existence checks.
-- Recent bot log lines plus recent UI/server events.
-- Last known status summary (connection/auth/build/safety/lifecycle where available).
-- A companion `.zip` file containing the JSON when the host has a `zip` utility available.
-
-Redaction behavior in exported logs/events:
-- Microsoft device sign-in codes are replaced with `[REDACTED_DEVICE_CODE]`.
-- Token-like hex/JWT strings are masked (`[REDACTED_HEX_TOKEN]`, `[REDACTED_JWT]`).
-- Common secret assignments (`access_token`, `refresh_token`, `password`, `secret`, `device_code`) are replaced with `[REDACTED]`.
-- Profile username in metadata is reduced to a short hint (`ab***`) instead of the full value.
-- If desktop startup fails with `SyntaxError: missing ) after argument list` in `desktop/main.js`, ensure you are on the latest repository revision/branch (older downloaded snapshots may contain stale launcher parser code).
-
-Forward compatibility for desktop profiles:
-- Launcher-managed `profile.json` metadata and per-profile `config.json` include a `schemaVersion` field.
-- On read/launch, desktop migration helpers normalize older payload keys (legacy host/auth/identity aliases), backfill required defaults for newly-added launcher fields, and atomically rewrite migrated files.
-- Missing `schemaVersion` is treated as v1 and upgraded in-place before profile listing/launch continues.
-
 
 1. Install Node.js 18+.
 2. Install dependencies:
@@ -124,7 +101,7 @@ The bot now exposes a lightweight GUI transport (HTTP + SSE) for a browser-based
 
 ### Operator controls
 
-Setup Wizard validates required fields before run and prevents Start while mandatory configuration is missing.
+Setup Wizard validates required fields before run and prevents Start while mandatory configuration is missing. In `easy` placement mode, origin/safe-platform coordinates are auto-derived from post-`/survival` center spawn position.
 
 Auth Type selector behavior:
 - `microsoft` → shows **Microsoft Email** (stored internally as `config.username`).
@@ -179,7 +156,9 @@ Progress checkpoints are written every 16 placements to `build-checkpoint.json` 
 - `layers` (number of layers, recommended 15–20)
 - `buildDelayTicks` (base delay between placements)
 - `removeScaffold` (`true`/`false`, default `false` for safer high-layer runs)
-- `origin` (`x,y,z`) base corner for the 16×16 chunk footprint
+- `farmSize` square footprint size (for example `9` = `9x9`, default `16`)
+- `placementMode` (`manual` or `easy`)
+- `origin` (`x,y,z`) base corner for the configured square footprint
 - `safePlatform` (`x,y,z`) post-build / emergency retreat location
 - `facingYawDegrees` final direction before logout
 - `gui` transport settings:

@@ -42,7 +42,9 @@ const els = {
   restartBotBtn: document.getElementById('restart-bot-btn'),
   authTypeSelect: document.getElementById('auth-type-select'),
   microsoftEmailGroup: document.getElementById('microsoft-email-group'),
-  offlineUsernameGroup: document.getElementById('offline-username-group')
+  offlineUsernameGroup: document.getElementById('offline-username-group'),
+  placementModeSelect: document.getElementById('placement-mode-select'),
+  manualPlacementGroup: document.getElementById('manual-placement-group')
 }
 
 const state = {
@@ -111,6 +113,17 @@ function getByPath (obj, path) {
   return path.split('.').reduce((acc, key) => (acc && Object.prototype.hasOwnProperty.call(acc, key) ? acc[key] : undefined), obj)
 }
 
+
+
+function getPlacementModeFromForm () {
+  const raw = String((els.placementModeSelect && els.placementModeSelect.value) || 'manual').toLowerCase()
+  return raw === 'easy' ? 'easy' : 'manual'
+}
+
+function applyPlacementVisibility () {
+  const mode = getPlacementModeFromForm()
+  if (els.manualPlacementGroup) els.manualPlacementGroup.classList.toggle('hidden', mode === 'easy')
+}
 
 function getAuthTypeFromForm () {
   const raw = String((els.authTypeSelect && els.authTypeSelect.value) || 'microsoft').toLowerCase()
@@ -194,6 +207,7 @@ function fillConfigForm (cfg) {
   const offlineInput = els.configForm.querySelector('[name="offlineUsername"]')
   if (msInput) msInput.value = authType === 'microsoft' ? username : ''
   if (offlineInput) offlineInput.value = authType === 'offline' ? username : ''
+  applyPlacementVisibility()
 }
 
 function collectConfigFromForm () {
@@ -495,6 +509,20 @@ function setupControls () {
       : 'All required fields are present.'
   })
 
+  if (els.placementModeSelect) {
+    els.placementModeSelect.addEventListener('change', () => {
+      applyPlacementVisibility()
+      markRequiredConfigFields()
+      const missing = validateRequiredInForm()
+      state.missingRequiredFields = missing
+      updateConfigHealthBanner()
+      updateStartButtonEnabled()
+      els.configMessage.textContent = missing.length > 0
+        ? `Missing required fields: ${missing.join(', ')}`
+        : 'All required fields are present.'
+    })
+  }
+
   els.configForm.addEventListener('input', () => {
     const missing = validateRequiredInForm()
     state.missingRequiredFields = missing
@@ -567,3 +595,5 @@ init().catch(err => {
   appendLog({ level: 'error', message: err.message, timestamp: Date.now() })
   showToast(err.message)
 })
+
+

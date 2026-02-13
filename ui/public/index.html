@@ -110,6 +110,16 @@
             <label>Layers<input name="layers" type="number" min="1" /></label>
             <label>Build Delay Ticks<input name="buildDelayTicks" type="number" min="1" /></label>
             <label>Facing Yaw Degrees<input name="facingYawDegrees" type="number" /></label>
+            <label>Placement Mode
+              <select name="placementMode" id="placement-mode-select">
+                <option value="manual">manual</option>
+                <option value="easy">easy (center spawn)</option>
+              </select>
+            </label>
+            <label>Farm Size (square)<input name="farmSize" type="number" min="3" max="64" /></label>
+          </div>
+          <p class="help-text">Farm size is square only (for example 9 = 9x9).</p>
+          <div class="config-grid" id="manual-placement-group">
             <label>Origin X * Required<input name="origin.x" type="number" required /></label>
             <label>Origin Y * Required<input name="origin.y" type="number" required /></label>
             <label>Origin Z * Required<input name="origin.z" type="number" required /></label>

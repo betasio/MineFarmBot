@@ -1,13 +1,12 @@
 'use strict'
 
 const { app, BrowserWindow, dialog, Tray, Menu, nativeImage, ipcMain, shell } = require('electron')
-const { spawn, spawnSync } = require('child_process')
+const { spawn } = require('child_process')
+const http = require('http')
 const path = require('path')
 const fs = require('fs')
-const os = require('os')
 
 const { DEFAULT_CONFIG, validateConfig } = require('../config')
-const { PROFILE_SCHEMA_VERSION, migrateProfileFiles, writeJsonAtomic } = require('./profileMigrations')
 
 let mainWindow = null
 let botProcess = null
@@ -15,14 +14,6 @@ let tray = null
 let shutdownRequested = false
 let forceQuit = false
 let currentProfileId = null
-let lastLifecycleState = null
-let lastStatusSnapshot = null
-let lastMsaPromptCode = null
-
-const MAX_CAPTURED_BOT_LOG_LINES = 400
-const MAX_CAPTURED_EVENTS = 250
-const recentBotLogLines = []
-const recentUiServerEvents = []
 
 const statePath = path.join(app.getPath('userData'), 'window-state.json')
 const profilesDir = path.join(app.getPath('userData'), 'profiles')
@@ -63,24 +54,13 @@ function readProfileMeta (profileId) {
   }
 }
 
-function migrateProfile (profileId) {
-  return migrateProfileFiles({
-    profileId,
-    metaPath: profileMetaPath(profileId),
-    configPath: profileConfigPath(profileId),
-    defaultConfig: DEFAULT_CONFIG,
-    validateConfig
-  })
-}
-
 function listProfiles () {
   ensureProfilesDir()
   const entries = fs.readdirSync(profilesDir, { withFileTypes: true })
     .filter(entry => entry.isDirectory())
     .map(entry => {
       const id = entry.name
-      const migrated = migrateProfile(id)
-      const meta = migrated.meta || { schemaVersion: PROFILE_SCHEMA_VERSION, id, name: id, auth: 'microsoft', createdAt: Date.now(), updatedAt: Date.now() }
+      const meta = readProfileMeta(id) || { id, name: id, auth: 'microsoft', createdAt: Date.now(), updatedAt: Date.now() }
       const checkpointFile = profileCheckpointPath(id)
       let checkpoint = null
       if (fs.existsSync(checkpointFile)) {
@@ -135,12 +115,8 @@ function createProfile (payload) {
     }
   })
 
-  writeJsonAtomic(profileConfigPath(id), {
-    ...config,
-    schemaVersion: PROFILE_SCHEMA_VERSION
-  })
-  writeJsonAtomic(profileMetaPath(id), {
-    schemaVersion: PROFILE_SCHEMA_VERSION,
+  fs.writeFileSync(profileConfigPath(id), `${JSON.stringify(config, null, 2)}\n`, 'utf8')
+  fs.writeFileSync(profileMetaPath(id), JSON.stringify({
     id,
     name: profileName,
     auth,
@@ -148,7 +124,7 @@ function createProfile (payload) {
     username: config.username,
     createdAt: now,
     updatedAt: now
-  })
+  }, null, 2), 'utf8')
 
   return { id, name: profileName }
 }
@@ -161,143 +137,13 @@ function resolveGuiUrlFromProfile (profileId) {
   return `http://${uiHost}:${port}`
 }
 
-function extractMsaCode (text) {
-  const raw = String(text || '')
-  const normalized = raw.toLowerCase()
-
-  if (!normalized.includes('microsoft') && !normalized.includes('microsoft.com/link') && !normalized.includes('use the code')) {
-    return null
-  }
-
-  let code = null
-  const codeMarker = 'use the code '
-  const markerIndex = normalized.indexOf(codeMarker)
-  if (markerIndex >= 0) {
-    const after = raw.slice(markerIndex + codeMarker.length)
-    const token = after.split(/\s|\.|,|;|\)|\(/)[0]
-    if (token && /^[A-Za-z0-9]{6,}$/.test(token)) code = token.toUpperCase()
-  }
-
-  const urlMatch = raw.match(/https?:\/\/[^\s]+/i)
-  const url = urlMatch ? urlMatch[0] : 'https://www.microsoft.com/link'
-
-  if (!code && urlMatch) {
-    try {
-      const parsed = new URL(url)
-      const otc = parsed.searchParams.get('otc')
-      if (otc && /^[A-Za-z0-9]{6,}$/.test(otc)) code = otc.toUpperCase()
-    } catch {}
-  }
-
-  const lowerUrl = url.toLowerCase()
-  const isMicrosoftLink = lowerUrl.includes('microsoft.com/link')
-  if (!code && !isMicrosoftLink) return null
-
+function parseMsaPrompt (text) {
+  const codeMatch = text.match(/use the code\s+([A-Z0-9]+)/i)
+  const urlMatch = text.match(/https?:\/\/[^\s]+/i)
+  if (!codeMatch && !urlMatch) return null
   return {
-    code,
-    url: isMicrosoftLink ? url : 'https://www.microsoft.com/link'
-  }
-}
-
-function pushBounded (target, value, maxSize) {
-  target.push(value)
-  if (target.length > maxSize) target.splice(0, target.length - maxSize)
-}
-
-function redactSecrets (value) {
-  const text = String(value == null ? '' : value)
-  return text
-    .replace(/(use\s+the\s+code\s+)([A-Z0-9]{4,})/ig, '$1[REDACTED_DEVICE_CODE]')
-    .replace(/(code\s*[=:]\s*)([A-Z0-9]{4,})/ig, '$1[REDACTED_DEVICE_CODE]')
-    .replace(/\b([A-Fa-f0-9]{24,})\b/g, '[REDACTED_HEX_TOKEN]')
-    .replace(/\b(eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9._-]+\.[A-Za-z0-9._-]+)\b/g, '[REDACTED_JWT]')
-    .replace(/(access[_-]?token|refresh[_-]?token|password|secret|device[_-]?code)\s*[:=]\s*([^\s,;]+)/ig, '$1=[REDACTED]')
-}
-
-function sanitizeProfileMeta (meta) {
-  if (!meta || typeof meta !== 'object') return null
-  return {
-    id: meta.id,
-    name: meta.name,
-    auth: meta.auth,
-    host: meta.host,
-    usernameHint: meta.username ? `${String(meta.username).slice(0, 2)}***` : null,
-    createdAt: meta.createdAt,
-    updatedAt: meta.updatedAt,
-    schemaVersion: meta.schemaVersion
-  }
-}
-
-function summarizeState (status) {
-  if (!status || typeof status !== 'object') return null
-  return {
-    lifecycleState: status.lifecycleState || null,
-    connection: status.connection || null,
-    auth: status.auth || null,
-    build: status.build || null,
-    safety: status.safety || null,
-    updatedAt: Date.now()
-  }
-}
-
-function buildDiagnosticsPayload (profileId) {
-  const selectedProfileId = profileId || currentProfileId
-  const configPath = selectedProfileId ? profileConfigPath(selectedProfileId) : null
-  const checkpointPath = selectedProfileId ? profileCheckpointPath(selectedProfileId) : null
-  const metaPath = selectedProfileId ? profileMetaPath(selectedProfileId) : null
-  const rawMeta = selectedProfileId ? readProfileMeta(selectedProfileId) : null
-
-  return {
-    generatedAt: new Date().toISOString(),
-    app: {
-      name: app.getName(),
-      version: app.getVersion(),
-      electron: process.versions.electron,
-      node: process.versions.node,
-      chrome: process.versions.chrome,
-      platform: process.platform,
-      release: os.release(),
-      arch: process.arch
-    },
-    selectedProfile: {
-      requestedProfileId: profileId || null,
-      activeProfileId: currentProfileId || null,
-      effectiveProfileId: selectedProfileId || null,
-      meta: sanitizeProfileMeta(rawMeta),
-      paths: {
-        configPath,
-        configExists: Boolean(configPath && fs.existsSync(configPath)),
-        checkpointPath,
-        checkpointExists: Boolean(checkpointPath && fs.existsSync(checkpointPath)),
-        profileMetaPath: metaPath,
-        profileMetaExists: Boolean(metaPath && fs.existsSync(metaPath))
-      }
-    },
-    recentBotLogLines: recentBotLogLines.slice(),
-    recentUiServerEvents: recentUiServerEvents.slice(),
-    stateSummary: summarizeState(lastStatusSnapshot)
-  }
-}
-
-function writeDiagnosticsBundle (baseOutputPath, diagnosticsPayload) {
-  const jsonPath = baseOutputPath.endsWith('.json') ? baseOutputPath : `${baseOutputPath}.json`
-  fs.mkdirSync(path.dirname(jsonPath), { recursive: true })
-  fs.writeFileSync(jsonPath, JSON.stringify(diagnosticsPayload, null, 2), 'utf8')
-
-  const zipPath = jsonPath.replace(/\.json$/i, '.zip')
-  const zipRes = spawnSync('zip', ['-j', '-q', zipPath, jsonPath])
-  if (!zipRes.error && zipRes.status === 0 && fs.existsSync(zipPath)) {
-    return {
-      jsonPath,
-      zipPath,
-      zipFormat: 'zip'
-    }
-  }
-
-  return {
-    jsonPath,
-    zipPath: null,
-    zipFormat: null
+    code: codeMatch ? codeMatch[1] : null,
+    url: urlMatch ? urlMatch[0] : 'https://www.microsoft.com/link'
   }
 }
 
@@ -306,82 +152,31 @@ function startBotProcess (profileId) {
   const cfgPath = profileConfigPath(profileId)
   const checkpointPath = profileCheckpointPath(profileId)
 
-  const botSpawnEnv = {
-    ...process.env,
-    ELECTRON_RUN_AS_NODE: '1',
-    MINEFARMBOT_DESKTOP: '1',
-    BOT_CONFIG_PATH: cfgPath,
-    BOT_CHECKPOINT_PATH: checkpointPath
-  }
-
   botProcess = spawn(process.execPath, [botEntry], {
     cwd: path.join(__dirname, '..'),
-    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
-    env: botSpawnEnv
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: '1',
+      MINEFARMBOT_DESKTOP: '1',
+      BOT_CONFIG_PATH: cfgPath,
+      BOT_CHECKPOINT_PATH: checkpointPath
+    }
   })
-
-  lastLifecycleState = null
-  lastMsaPromptCode = null
 
   const onOutput = (prefix, chunk) => {
     const text = chunk.toString()
     process.stdout.write(`${prefix}${text}`)
-    const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
-    for (const line of lines) {
-      pushBounded(recentBotLogLines, {
-        timestamp: Date.now(),
-        source: prefix.trim(),
-        line: redactSecrets(line)
-      }, MAX_CAPTURED_BOT_LOG_LINES)
-    }
 
-    for (const line of lines) {
-      const msa = extractMsaCode(line)
-      if (!msa || !mainWindow || mainWindow.isDestroyed()) continue
-
+    const msa = parseMsaPrompt(text)
+    if (msa && mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('desktop:msa-code', msa)
-      if (msa.code && msa.code !== lastMsaPromptCode) {
-        lastMsaPromptCode = msa.code
-        shell.openExternal(msa.url).catch(() => {})
-      }
+      shell.openExternal(msa.url).catch(() => {})
     }
   }
 
   botProcess.stdout.on('data', chunk => onOutput('[BOT] ', chunk))
   botProcess.stderr.on('data', chunk => onOutput('[BOT:ERR] ', chunk))
-
-  botProcess.on('message', envelope => {
-    if (!envelope || typeof envelope !== 'object') return
-    if (!mainWindow || mainWindow.isDestroyed()) return
-    const channel = envelope.channel
-    const payload = envelope.payload
-    if (!channel || !['status', 'log', 'warning', 'error'].includes(channel)) return
-
-    pushBounded(recentUiServerEvents, {
-      timestamp: Date.now(),
-      channel,
-      payload: JSON.parse(JSON.stringify(payload == null ? null : payload, (_key, val) => {
-        if (typeof val === 'string') return redactSecrets(val)
-        return val
-      }))
-    }, MAX_CAPTURED_EVENTS)
-
-    mainWindow.webContents.send(`desktop:${channel}`, payload)
-    if (channel === 'status') {
-      lastStatusSnapshot = payload || null
-      const lifecycleState = payload && payload.lifecycleState
-      if (lifecycleState && lifecycleState !== lastLifecycleState) {
-        const transition = {
-          previous: lastLifecycleState,
-          current: lifecycleState,
-          timestamp: Date.now(),
-          status: payload
-        }
-        mainWindow.webContents.send('desktop:status-transition', transition)
-        lastLifecycleState = lifecycleState
-      }
-    }
-  })
 
   botProcess.on('exit', (code, signal) => {
     const crashed = !shutdownRequested
@@ -399,7 +194,6 @@ function startBotProcess (profileId) {
 
 function stopBotProcess () {
   shutdownRequested = true
-  lastLifecycleState = null
   if (!botProcess) return
   try {
     botProcess.kill('SIGINT')
@@ -418,7 +212,6 @@ async function restartBotProcess () {
 
 async function launchProfile (profileId) {
   if (!profileId) throw new Error('Profile id is required')
-  migrateProfile(profileId)
   if (!fs.existsSync(profileConfigPath(profileId))) throw new Error('Profile config not found')
 
   currentProfileId = profileId
@@ -432,10 +225,7 @@ async function launchProfile (profileId) {
   const meta = readProfileMeta(profileId)
   if (meta) {
     meta.updatedAt = Date.now()
-    writeJsonAtomic(profileMetaPath(profileId), {
-      ...meta,
-      schemaVersion: PROFILE_SCHEMA_VERSION
-    })
+    fs.writeFileSync(profileMetaPath(profileId), JSON.stringify(meta, null, 2), 'utf8')
   }
 
   return { ok: true }
@@ -443,19 +233,43 @@ async function launchProfile (profileId) {
 
 async function loadGuiWhenReady (profileId) {
   const url = resolveGuiUrlFromProfile(profileId)
-  const deadline = Date.now() + 30000
+  const deadline = Date.now() + 90000
 
   while (Date.now() < deadline) {
     if (!mainWindow || mainWindow.isDestroyed()) return
     try {
-      await mainWindow.loadURL(url)
-      return
+      await probeGui(url)
+      break
     } catch {
-      await new Promise(resolve => setTimeout(resolve, 500))
+      await new Promise(resolve => setTimeout(resolve, 350))
     }
   }
 
+  if (!mainWindow || mainWindow.isDestroyed()) return
+
+  try {
+    await mainWindow.loadURL(url)
+    return
+  } catch {}
+
   dialog.showErrorBox('GUI failed to load', `Could not connect to ${url} within timeout. Ensure bot GUI transport is enabled.`)
+}
+
+function probeGui (baseUrl) {
+  return new Promise((resolve, reject) => {
+    const req = http.get(`${baseUrl}/status`, { timeout: 1000 }, (res) => {
+      if (res.statusCode && res.statusCode >= 200 && res.statusCode < 500) {
+        res.resume()
+        resolve()
+        return
+      }
+      res.resume()
+      reject(new Error(`status ${res.statusCode || 'unknown'}`))
+    })
+
+    req.on('timeout', () => req.destroy(new Error('timeout')))
+    req.on('error', reject)
+  })
 }
 
 async function loadLauncher () {
@@ -590,71 +404,37 @@ if (!gotSingleInstanceLock) {
   })
 }
 
-const handleListProfiles = async () => ({ ok: true, profiles: listProfiles() })
-const handleCreateProfile = async (_event, payload) => {
+ipcMain.handle('desktop:list-profiles', async () => ({ ok: true, profiles: listProfiles() }))
+ipcMain.handle('desktop:create-profile', async (_event, payload) => {
   try {
     const created = createProfile(payload || {})
     return { ok: true, profile: created, profiles: listProfiles() }
   } catch (err) {
     return { ok: false, error: err.message || String(err) }
   }
-}
-const handleLaunchProfile = async (_event, profileId) => {
+})
+ipcMain.handle('desktop:launch-profile', async (_event, profileId) => {
   try {
     await launchProfile(profileId)
     return { ok: true }
   } catch (err) {
     return { ok: false, error: err.message || String(err) }
   }
-}
-const handleRestartBot = async () => {
+})
+ipcMain.handle('desktop:restart-bot', async () => {
   try {
     await restartBotProcess()
     return { ok: true }
   } catch (err) {
     return { ok: false, error: err.message || String(err) }
   }
-}
-const handleStopBot = async () => {
+})
+ipcMain.handle('desktop:stop-bot', async () => {
   stopBotProcess()
   currentProfileId = null
   await loadLauncher()
   return { ok: true }
-}
-
-const handleExportDiagnostics = async (_event, profileId) => {
-  try {
-    const fallbackName = `minefarmbot-diagnostics-${new Date().toISOString().replace(/[:.]/g, '-')}`
-    const saveRes = await dialog.showSaveDialog({
-      title: 'Export Diagnostics Bundle',
-      defaultPath: path.join(app.getPath('documents'), `${fallbackName}.json`),
-      filters: [
-        { name: 'JSON', extensions: ['json'] }
-      ]
-    })
-    if (saveRes.canceled || !saveRes.filePath) return { ok: false, canceled: true }
-
-    const payload = buildDiagnosticsPayload(profileId)
-    const written = writeDiagnosticsBundle(saveRes.filePath, payload)
-    return { ok: true, ...written }
-  } catch (err) {
-    return { ok: false, error: err.message || String(err) }
-  }
-}
-
-ipcMain.handle('desktop:listProfiles', handleListProfiles)
-ipcMain.handle('desktop:createProfile', handleCreateProfile)
-ipcMain.handle('desktop:launchProfile', handleLaunchProfile)
-ipcMain.handle('desktop:restartBot', handleRestartBot)
-ipcMain.handle('desktop:stopBot', handleStopBot)
-ipcMain.handle('desktop:exportDiagnostics', handleExportDiagnostics)
-
-ipcMain.handle('desktop:list-profiles', handleListProfiles)
-ipcMain.handle('desktop:create-profile', handleCreateProfile)
-ipcMain.handle('desktop:launch-profile', handleLaunchProfile)
-ipcMain.handle('desktop:restart-bot', handleRestartBot)
-ipcMain.handle('desktop:stop-bot', handleStopBot)
-ipcMain.handle('desktop:export-diagnostics', handleExportDiagnostics)
+})
 
 app.whenReady().then(async () => {
   shutdownRequested = false
@@ -682,19 +462,3 @@ app.on('activate', () => {
     mainWindow.focus()
   }
 })
-
-if (process.env.NODE_ENV === 'test') {
-  module.exports = {
-    __testHooks: {
-      launchProfile,
-      extractMsaCode,
-      startBotProcess,
-      stopBotProcess,
-      restartBotProcess,
-      listProfiles,
-      createProfile,
-      buildDiagnosticsPayload,
-      redactSecrets
-    }
-  }
-}

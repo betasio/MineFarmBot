@@ -13,6 +13,8 @@ const DEFAULT_CONFIG = {
   version: false,
   layers: 18,
   buildDelayTicks: 3,
+  farmSize: 16,
+  placementMode: 'manual',
   removeScaffold: false,
   safePlatform: { x: 0, y: 64, z: 0 },
   origin: { x: 0, y: 64, z: 0 },
@@ -56,6 +58,8 @@ function validateConfig (config) {
   return {
     ...config,
     layers: clampInteger(config.layers, 1, 128, DEFAULT_CONFIG.layers),
+    farmSize: clampInteger(config.farmSize, 3, 64, DEFAULT_CONFIG.farmSize),
+    placementMode: String(config.placementMode || DEFAULT_CONFIG.placementMode).toLowerCase() === 'easy' ? 'easy' : 'manual',
     buildDelayTicks: clampInteger(config.buildDelayTicks, 1, 40, DEFAULT_CONFIG.buildDelayTicks),
     removeScaffold: Boolean(config.removeScaffold),
     facingYawDegrees: Number.isFinite(Number(config.facingYawDegrees)) ? Number(config.facingYawDegrees) : DEFAULT_CONFIG.facingYawDegrees,

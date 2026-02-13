@@ -3,14 +3,17 @@
 const fs = require('fs')
 const http = require('http')
 const path = require('path')
-const { loadConfig, validateConfig } = require('../config')
+const { loadConfig, validateConfig, resolveConfigPath } = require('../config')
 
 const MAX_CONTROL_PAYLOAD_BYTES = 4096
 const SSE_HEARTBEAT_MS = 15000
-const REQUIRED_CONFIG_FIELDS = [
+const BASE_REQUIRED_CONFIG_FIELDS = [
   'host',
   'port',
-  'auth',
+  'auth'
+]
+
+const MANUAL_PLACEMENT_REQUIRED_FIELDS = [
   'origin.x',
   'origin.y',
   'origin.z',
@@ -35,9 +38,16 @@ function getByPath (obj, pathStr) {
   return pathStr.split('.').reduce((acc, key) => (acc && Object.prototype.hasOwnProperty.call(acc, key) ? acc[key] : undefined), obj)
 }
 
+function getRequiredFields (config) {
+  const placementMode = String((config && config.placementMode) || 'manual').toLowerCase()
+  return placementMode === 'easy'
+    ? [...BASE_REQUIRED_CONFIG_FIELDS]
+    : [...BASE_REQUIRED_CONFIG_FIELDS, ...MANUAL_PLACEMENT_REQUIRED_FIELDS]
+}
+
 function getMissingRequiredFields (config) {
   const missing = []
-  for (const field of REQUIRED_CONFIG_FIELDS) {
+  for (const field of getRequiredFields(config)) {
     const value = getByPath(config, field)
     if (value == null || value === '' || (typeof value === 'number' && Number.isNaN(value))) missing.push(field)
   }
@@ -69,7 +79,7 @@ function startUiServer ({ engine, cfg }) {
   const port = guiConfig.port || 8787
   const publicDir = path.join(__dirname, 'public')
   const clients = new Set()
-  const configPath = path.join(process.cwd(), 'config.json')
+  const configPath = resolveConfigPath()
 
   function saveConfigToDisk (nextConfig) {
     const payload = `${JSON.stringify(nextConfig, null, 2)}\n`
@@ -177,7 +187,7 @@ function startUiServer ({ engine, cfg }) {
       jsonResponse(res, 200, {
         ok: true,
         config: loaded,
-        requiredFields: REQUIRED_CONFIG_FIELDS,
+        requiredFields: getRequiredFields(loaded),
         missingRequiredFields: getMissingRequiredFields(loaded)
       })
       return
@@ -239,7 +249,7 @@ function startUiServer ({ engine, cfg }) {
               ok: false,
               error: 'Required configuration fields are missing.',
               missingRequiredFields,
-              requiredFields: REQUIRED_CONFIG_FIELDS
+              requiredFields: getRequiredFields(validated)
             })
             return
           }
@@ -254,7 +264,7 @@ function startUiServer ({ engine, cfg }) {
           jsonResponse(res, 200, {
             ok: true,
             config: validated,
-            requiredFields: REQUIRED_CONFIG_FIELDS,
+            requiredFields: getRequiredFields(validated),
             missingRequiredFields: [],
             message: 'Configuration saved. Restart bot process to apply connection-level changes.'
           })
@@ -290,6 +300,7 @@ function startUiServer ({ engine, cfg }) {
         })
         fs.createReadStream(fullPath).pipe(res)
       })
+
       return
     }
 

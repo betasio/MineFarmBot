@@ -397,16 +397,43 @@ function createBotEngine (config = validateConfig(loadConfig())) {
 
   function buildGridTasks (origin, layerIndex) {
     const y = origin.y + (layerIndex * 3)
+    const size = Math.max(3, Number(cfg.farmSize) || 16)
     const cells = []
-    for (let dz = 0; dz < 16; dz++) {
+    for (let dz = 0; dz < size; dz++) {
       const leftToRight = dz % 2 === 0
-      const xValues = leftToRight ? [...Array(16).keys()] : [...Array(16).keys()].reverse()
+      const xValues = leftToRight ? [...Array(size).keys()] : [...Array(size).keys()].reverse()
       for (const dx of xValues) {
         const scaffoldOffsetX = leftToRight ? 1 : -1
         cells.push({ sandPos: new Vec3(origin.x + dx, y, origin.z + dz), scaffoldOffsetX })
       }
     }
     return cells
+  }
+
+  function resolveEasyPlacementFromPlayerPosition () {
+    const placementMode = String(cfg.placementMode || 'manual').toLowerCase()
+    if (placementMode !== 'easy') return
+
+    const size = Math.max(3, Number(cfg.farmSize) || 16)
+    const center = bot.entity.position.floored()
+    const half = Math.floor(size / 2)
+    const origin = {
+      x: center.x - half,
+      y: center.y,
+      z: center.z - half
+    }
+
+    let safeY = center.y
+    const centerBlock = bot.blockAt(new Vec3(center.x, center.y, center.z))
+    const belowCenter = bot.blockAt(new Vec3(center.x, center.y - 1, center.z))
+    const belowSolid = belowCenter && belowCenter.boundingBox === 'block' && belowCenter.name !== 'sand'
+    const centerSolid = centerBlock && centerBlock.boundingBox === 'block' && centerBlock.name !== 'sand'
+    if (!belowSolid && centerSolid) safeY = center.y + 1
+
+    cfg.origin = origin
+    cfg.safePlatform = { x: center.x, y: safeY, z: center.z }
+
+    log(`Easy placement enabled: center=${center.x},${center.y},${center.z} size=${size}x${size} -> origin=${origin.x},${origin.y},${origin.z} safePlatform=${cfg.safePlatform.x},${cfg.safePlatform.y},${cfg.safePlatform.z}`)
   }
 
   const chooseScaffoldPos = (sandPos, xOffset) => sandPos.offset(xOffset, 0, 0)
@@ -822,6 +849,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
         startLagMonitor()
         setupSafetyHooks()
         await enterSurvivalFromLobby()
+        resolveEasyPlacementFromPlayerPosition()
 
         if (!hasSolidFooting()) {
           warn('Bot spawned without solid non-sand footing. Fix position, then run start.')
