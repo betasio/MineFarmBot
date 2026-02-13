@@ -14,12 +14,12 @@ const BASE_REQUIRED_CONFIG_FIELDS = [
 ]
 
 const MANUAL_PLACEMENT_REQUIRED_FIELDS = [
-  'origin.x',
-  'origin.y',
-  'origin.z',
-  'safePlatform.x',
-  'safePlatform.y',
-  'safePlatform.z'
+  'manualCornerA.x',
+  'manualCornerA.y',
+  'manualCornerA.z',
+  'manualCornerB.x',
+  'manualCornerB.y',
+  'manualCornerB.z'
 ]
 
 function formatSse (event, data) {
@@ -58,6 +58,60 @@ function getMissingRequiredFields (config) {
   }
 
   return [...new Set(missing)]
+}
+
+
+
+function derivePlacementFromConfig (config) {
+  const next = { ...config }
+  const placementMode = String(next.placementMode || 'manual').toLowerCase() === 'easy' ? 'easy' : 'manual'
+  const size = Math.max(3, Number(next.farmSize) || 16)
+  next.farmSize = size
+
+  if (placementMode === 'manual') {
+    const a = next.manualCornerA || {}
+    const b = next.manualCornerB || {}
+    const hasCorners = Number.isFinite(Number(a.x)) && Number.isFinite(Number(a.y)) && Number.isFinite(Number(a.z)) &&
+      Number.isFinite(Number(b.x)) && Number.isFinite(Number(b.y)) && Number.isFinite(Number(b.z))
+
+    if (hasCorners) {
+      const ax = Math.floor(Number(a.x))
+      const ay = Math.floor(Number(a.y))
+      const az = Math.floor(Number(a.z))
+      const bx = Math.floor(Number(b.x))
+      const by = Math.floor(Number(b.y))
+      const bz = Math.floor(Number(b.z))
+
+      const spanX = Math.abs(bx - ax) + 1
+      const spanZ = Math.abs(bz - az) + 1
+      const squareSize = Math.max(3, Math.min(64, Math.max(spanX, spanZ)))
+      const originX = Math.min(ax, bx)
+      const originZ = Math.min(az, bz)
+      const originY = ay
+
+      next.farmSize = squareSize
+      next.origin = { x: originX, y: originY, z: originZ }
+    }
+  }
+
+  const origin = next.origin || { x: 0, y: 64, z: 0 }
+  const centerOffset = Math.floor((next.farmSize - 1) / 2)
+  next.safePlatform = {
+    x: Math.floor(Number(origin.x) || 0) + centerOffset,
+    y: Math.floor(Number(origin.y) || 64),
+    z: Math.floor(Number(origin.z) || 0) + centerOffset
+  }
+
+  return next
+}
+
+function enrichConfigForWizard (config) {
+  const enriched = { ...config }
+  const size = Math.max(3, Number(enriched.farmSize) || 16)
+  const origin = enriched.origin || { x: 0, y: 64, z: 0 }
+  enriched.manualCornerA = { x: origin.x, y: origin.y, z: origin.z }
+  enriched.manualCornerB = { x: origin.x + (size - 1), y: origin.y, z: origin.z + (size - 1) }
+  return enriched
 }
 
 function guessContentType (filePath) {
@@ -184,9 +238,10 @@ function startUiServer ({ engine, cfg }) {
 
     if (req.method === 'GET' && reqUrl.pathname === '/config') {
       const loaded = validateConfig(loadConfig())
+      const wizardConfig = enrichConfigForWizard(loaded)
       jsonResponse(res, 200, {
         ok: true,
-        config: loaded,
+        config: wizardConfig,
         requiredFields: getRequiredFields(loaded),
         missingRequiredFields: getMissingRequiredFields(loaded)
       })
@@ -224,11 +279,10 @@ function startUiServer ({ engine, cfg }) {
 
         try {
           const baseConfig = loadConfig()
-          const validated = validateConfig({
+          const mergedConfig = {
             ...baseConfig,
             ...userConfig,
             origin: { ...(baseConfig.origin || {}), ...((userConfig && userConfig.origin) || {}) },
-            safePlatform: { ...(baseConfig.safePlatform || {}), ...((userConfig && userConfig.safePlatform) || {}) },
             gui: { ...(baseConfig.gui || {}), ...((userConfig && userConfig.gui) || {}) },
             refill: {
               ...(baseConfig.refill || {}),
@@ -241,8 +295,12 @@ function startUiServer ({ engine, cfg }) {
                 ...(((baseConfig.refill || {}).targetStacks) || {}),
                 ...((((userConfig || {}).refill || {}).targetStacks) || {})
               }
-            }
-          })
+            },
+            manualCornerA: { ...(baseConfig.manualCornerA || {}), ...((userConfig && userConfig.manualCornerA) || {}) },
+            manualCornerB: { ...(baseConfig.manualCornerB || {}), ...((userConfig && userConfig.manualCornerB) || {}) }
+          }
+
+          const validated = validateConfig(derivePlacementFromConfig(mergedConfig))
           const missingRequiredFields = getMissingRequiredFields(validated)
           if (missingRequiredFields.length > 0) {
             jsonResponse(res, 400, {
@@ -263,7 +321,7 @@ function startUiServer ({ engine, cfg }) {
           saveConfigToDisk(validated)
           jsonResponse(res, 200, {
             ok: true,
-            config: validated,
+            config: enrichConfigForWizard(validated),
             requiredFields: getRequiredFields(validated),
             missingRequiredFields: [],
             message: 'Configuration saved. Restart bot process to apply connection-level changes.'
@@ -300,7 +358,6 @@ function startUiServer ({ engine, cfg }) {
         })
         fs.createReadStream(fullPath).pipe(res)
       })
-
       return
     }
 

@@ -129,6 +129,33 @@ function createProfile (payload) {
   return { id, name: profileName }
 }
 
+
+function removeProfileDir (targetDir) {
+  if (!fs.existsSync(targetDir)) return
+  for (const entry of fs.readdirSync(targetDir, { withFileTypes: true })) {
+    const full = path.join(targetDir, entry.name)
+    if (entry.isDirectory()) removeProfileDir(full)
+    else {
+      try { fs.unlinkSync(full) } catch {}
+    }
+  }
+  try { fs.rmdirSync(targetDir) } catch {}
+}
+
+function deleteProfile (profileId) {
+  if (!profileId) throw new Error('Profile id is required')
+  const dir = profileDir(profileId)
+  if (!fs.existsSync(dir)) throw new Error('Profile not found')
+
+  if (currentProfileId === profileId) {
+    stopBotProcess()
+    currentProfileId = null
+  }
+
+  removeProfileDir(dir)
+  return { ok: true }
+}
+
 function resolveGuiUrlFromProfile (profileId) {
   const config = validateConfig(JSON.parse(fs.readFileSync(profileConfigPath(profileId), 'utf8')))
   const host = (config.gui && config.gui.host) || '127.0.0.1'
@@ -417,6 +444,15 @@ ipcMain.handle('desktop:launch-profile', async (_event, profileId) => {
   try {
     await launchProfile(profileId)
     return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err.message || String(err) }
+  }
+})
+ipcMain.handle('desktop:delete-profile', async (_event, profileId) => {
+  try {
+    deleteProfile(profileId)
+    if (!currentProfileId && mainWindow && !mainWindow.isDestroyed()) await loadLauncher()
+    return { ok: true, profiles: listProfiles() }
   } catch (err) {
     return { ok: false, error: err.message || String(err) }
   }

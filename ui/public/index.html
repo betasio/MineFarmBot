@@ -118,14 +118,14 @@
             </label>
             <label>Farm Size (square)<input name="farmSize" type="number" min="3" max="64" /></label>
           </div>
-          <p class="help-text">Farm size is square only (for example 9 = 9x9).</p>
+          <p class="help-text">Farm size is square only (for example 9 = 9x9). In manual mode, provide two diagonal corners; safe platform is auto-set to farm center.</p>
           <div class="config-grid" id="manual-placement-group">
-            <label>Origin X * Required<input name="origin.x" type="number" required /></label>
-            <label>Origin Y * Required<input name="origin.y" type="number" required /></label>
-            <label>Origin Z * Required<input name="origin.z" type="number" required /></label>
-            <label>Safe Platform X * Required<input name="safePlatform.x" type="number" required /></label>
-            <label>Safe Platform Y * Required<input name="safePlatform.y" type="number" required /></label>
-            <label>Safe Platform Z * Required<input name="safePlatform.z" type="number" required /></label>
+            <label>1st Corner X * Required<input name="manualCornerA.x" type="number" required /></label>
+            <label>1st Corner Y * Required<input name="manualCornerA.y" type="number" required /></label>
+            <label>1st Corner Z * Required<input name="manualCornerA.z" type="number" required /></label>
+            <label>Diagonal Corner X * Required<input name="manualCornerB.x" type="number" required /></label>
+            <label>Diagonal Corner Y * Required<input name="manualCornerB.y" type="number" required /></label>
+            <label>Diagonal Corner Z * Required<input name="manualCornerB.z" type="number" required /></label>
             <label class="checkline"><input name="removeScaffold" type="checkbox" /> Remove scaffold</label>
           </div>
         </section>

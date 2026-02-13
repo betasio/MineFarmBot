@@ -913,7 +913,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
       username: cfg.username,
       password: cfg.password,
       auth: cfg.auth,
-      version: cfg.version || undefined
+      version: cfg.version === false ? undefined : cfg.version
     })
 
     registerBotEvents()

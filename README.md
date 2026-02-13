@@ -101,7 +101,7 @@ The bot now exposes a lightweight GUI transport (HTTP + SSE) for a browser-based
 
 ### Operator controls
 
-Setup Wizard validates required fields before run and prevents Start while mandatory configuration is missing. In `easy` placement mode, origin/safe-platform coordinates are auto-derived from post-`/survival` center spawn position.
+Setup Wizard validates required fields before run and prevents Start while mandatory configuration is missing. In `easy` placement mode, origin/safe-platform coordinates are auto-derived from post-`/survival` center spawn position. In `manual` mode, you provide two diagonal corners and the app auto-derives square size, origin, and centered safe platform.
 
 Auth Type selector behavior:
 - `microsoft` → shows **Microsoft Email** (stored internally as `config.username`).
@@ -132,7 +132,7 @@ The GUI surfaces live operational telemetry so operators can monitor the bot wit
 4. Run `npm install` once.
 5. Start with `npm start`.
 6. Open the GUI URL shown in startup logs.
-7. Open **Setup Wizard** and fill required fields: server `host`, `port`, `username`, and farm `origin` / `safePlatform`.
+7. Open **Setup Wizard** and fill required fields: server `host`, `port`, `username`, then choose placement mode (`easy` or `manual`). For manual, enter two diagonal corners; center safe-platform is auto-derived.
 8. Save config from the GUI; restart process if you changed connection-level fields.
 9. Use GUI controls (Start/Pause/Resume/Safe Stop).
 10. Use CLI commands only if GUI is unavailable (debug/backup): `start`, `pause`, `resume`, `stop`, `status`.
@@ -159,7 +159,7 @@ Progress checkpoints are written every 16 placements to `build-checkpoint.json` 
 - `farmSize` square footprint size (for example `9` = `9x9`, default `16`)
 - `placementMode` (`manual` or `easy`)
 - `origin` (`x,y,z`) base corner for the configured square footprint
-- `safePlatform` (`x,y,z`) post-build / emergency retreat location
+- `safePlatform` (`x,y,z`) post-build / emergency retreat location (auto-derived to farm center by wizard saves)
 - `facingYawDegrees` final direction before logout
 - `gui` transport settings:
   - `enabled` (turn GUI transport on/off)

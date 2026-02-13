@@ -47,6 +47,15 @@ function clampInteger (value, min, max, fallback) {
   return Math.max(min, Math.min(max, Math.floor(num)))
 }
 
+function normalizeVersion (value) {
+  if (value == null || value === false) return false
+  const raw = String(value).trim()
+  if (!raw) return false
+  const lowered = raw.toLowerCase()
+  if (lowered === 'false' || lowered === 'auto' || lowered === 'default' || lowered === 'null' || lowered === 'undefined') return false
+  return raw
+}
+
 function validateConfig (config) {
   const refill = {
     ...DEFAULT_CONFIG.refill,
@@ -61,6 +70,7 @@ function validateConfig (config) {
     farmSize: clampInteger(config.farmSize, 3, 64, DEFAULT_CONFIG.farmSize),
     placementMode: String(config.placementMode || DEFAULT_CONFIG.placementMode).toLowerCase() === 'easy' ? 'easy' : 'manual',
     buildDelayTicks: clampInteger(config.buildDelayTicks, 1, 40, DEFAULT_CONFIG.buildDelayTicks),
+    version: normalizeVersion(config.version),
     removeScaffold: Boolean(config.removeScaffold),
     facingYawDegrees: Number.isFinite(Number(config.facingYawDegrees)) ? Number(config.facingYawDegrees) : DEFAULT_CONFIG.facingYawDegrees,
     gui: {
@@ -134,6 +144,7 @@ module.exports = {
   DEFAULT_CONFIG,
   resolveConfigPath,
   clampInteger,
+  normalizeVersion,
   validateConfig,
   loadConfig
 }
