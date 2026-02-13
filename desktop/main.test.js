@@ -283,3 +283,40 @@ test('MSA device code output emits desktop:msa-code and invokes browser open cal
   assert.deepEqual(harness.sendEvents[0][1], { code: 'ABC123', url: 'https://www.microsoft.com/link' })
   assert.deepEqual(harness.openExternalCalls, ['https://www.microsoft.com/link'])
 })
+
+
+test('desktop IPC status transition emits only on state change', async () => {
+  const harness = createHarness()
+
+  const created = await invoke(harness, 'desktop:createProfile', {
+    name: 'State Events',
+    auth: 'offline',
+    identity: 'state-user',
+    host: 'localhost'
+  })
+
+  const realSetTimeout = global.setTimeout
+  global.setTimeout = (fn) => {
+    fn()
+    return 0
+  }
+
+  try {
+    const launched = await invoke(harness, 'desktop:launchProfile', created.profile.id)
+    assert.equal(launched.ok, true)
+  } finally {
+    global.setTimeout = realSetTimeout
+  }
+
+  const child = harness.getLatestChild()
+  assert.ok(child)
+
+  child.emit('message', { channel: 'status', payload: { lifecycleState: 'connecting' } })
+  child.emit('message', { channel: 'status', payload: { lifecycleState: 'connecting' } })
+  child.emit('message', { channel: 'status', payload: { lifecycleState: 'running' } })
+
+  const transitions = harness.sendEvents.filter(event => event[0] === 'desktop:status-transition')
+  assert.equal(transitions.length, 2)
+  assert.equal(transitions[0][1].current, 'connecting')
+  assert.equal(transitions[1][1].current, 'running')
+})
