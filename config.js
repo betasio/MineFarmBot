@@ -12,6 +12,8 @@ const DEFAULT_CONFIG = {
   version: false,
   layers: 18,
   buildDelayTicks: 3,
+  farmSize: 16,
+  placementMode: 'manual',
   removeScaffold: false,
   safePlatform: { x: 0, y: 64, z: 0 },
   origin: { x: 0, y: 64, z: 0 },
@@ -31,10 +33,26 @@ const DEFAULT_CONFIG = {
   }
 }
 
+function resolveConfigPath () {
+  if (process.env.BOT_CONFIG_PATH && process.env.BOT_CONFIG_PATH.trim().length > 0) {
+    return process.env.BOT_CONFIG_PATH.trim()
+  }
+  return path.join(process.cwd(), 'config.json')
+}
+
 function clampInteger (value, min, max, fallback) {
   const num = Number(value)
   if (!Number.isFinite(num)) return fallback
   return Math.max(min, Math.min(max, Math.floor(num)))
+}
+
+function normalizeVersion (value) {
+  if (value == null || value === false) return false
+  const raw = String(value).trim()
+  if (!raw) return false
+  const lowered = raw.toLowerCase()
+  if (lowered === 'false' || lowered === 'auto' || lowered === 'default' || lowered === 'null' || lowered === 'undefined') return false
+  return raw
 }
 
 function validateConfig (config) {
@@ -48,7 +66,10 @@ function validateConfig (config) {
   return {
     ...config,
     layers: clampInteger(config.layers, 1, 128, DEFAULT_CONFIG.layers),
+    farmSize: clampInteger(config.farmSize, 3, 64, DEFAULT_CONFIG.farmSize),
+    placementMode: String(config.placementMode || DEFAULT_CONFIG.placementMode).toLowerCase() === 'easy' ? 'easy' : 'manual',
     buildDelayTicks: clampInteger(config.buildDelayTicks, 1, 40, DEFAULT_CONFIG.buildDelayTicks),
+    version: normalizeVersion(config.version),
     removeScaffold: Boolean(config.removeScaffold),
     facingYawDegrees: Number.isFinite(Number(config.facingYawDegrees)) ? Number(config.facingYawDegrees) : DEFAULT_CONFIG.facingYawDegrees,
     gui: {
@@ -90,9 +111,9 @@ function validateConfig (config) {
 }
 
 function loadConfig () {
-  const configPath = path.join(process.cwd(), 'config.json')
+  const configPath = resolveConfigPath()
   if (!fs.existsSync(configPath)) {
-    console.warn('[WARN] config.json not found. Falling back to defaults.')
+    console.warn(`[WARN] ${path.basename(configPath)} not found. Falling back to defaults.`)
     return DEFAULT_CONFIG
   }
 
@@ -107,14 +128,16 @@ function loadConfig () {
       gui: { ...DEFAULT_CONFIG.gui, ...(parsed.gui || {}) }
     }
   } catch (err) {
-    console.warn(`[WARN] Failed to parse config.json: ${err.message}. Falling back to defaults.`)
+    console.warn(`[WARN] Failed to parse ${path.basename(configPath)}: ${err.message}. Falling back to defaults.`)
     return DEFAULT_CONFIG
   }
 }
 
 module.exports = {
   DEFAULT_CONFIG,
+  resolveConfigPath,
   clampInteger,
+  normalizeVersion,
   validateConfig,
   loadConfig
 }
