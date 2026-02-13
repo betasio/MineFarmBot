@@ -207,6 +207,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
       ? { x: bot.entity.position.x, y: bot.entity.position.y, z: bot.entity.position.z }
       : null
     const uptimeMs = connectionStartedAt ? (Date.now() - connectionStartedAt) : lastUptimeMs
+    const lookAt = normalizeLookAtDescriptor()
     const movement = getMovementStatus()
     return {
       connectionState: getConnectionState(),
@@ -224,7 +225,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
       reconnectDelayMs: nextReconnectDelayMs,
       reconnectAt: nextReconnectAt,
       lifecycleState,
-      lookAt: normalizeLookAtDescriptor(),
+      lookAt,
       movement,
       position,
       movement,
