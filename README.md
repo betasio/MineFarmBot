@@ -72,6 +72,11 @@ Desktop Launcher workflow:
 4. Microsoft auth prompts are surfaced in app and browser opens automatically when code is issued.
 5. Each profile has isolated `config.json` and `build-checkpoint.json` under desktop user-data profiles.
 
+Forward compatibility for desktop profiles:
+- Launcher-managed `profile.json` metadata and per-profile `config.json` include a `schemaVersion` field.
+- On read/launch, desktop migration helpers normalize older payload keys (legacy host/auth/identity aliases), backfill required defaults for newly-added launcher fields, and atomically rewrite migrated files.
+- Missing `schemaVersion` is treated as v1 and upgraded in-place before profile listing/launch continues.
+
 
 1. Install Node.js 18+.
 2. Install dependencies:
