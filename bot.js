@@ -15,6 +15,18 @@ const { startUiServer } = require('./ui/server')
 
 const TICKS_PER_SECOND = 20
 const MAX_RECONNECT_DELAY = 60_000
+const RECONNECT_BASE_DELAY_MS = 2_000
+const MAX_RECONNECT_WINDOW_MS = 10 * 60_000
+
+const LIFECYCLE_STATES = Object.freeze({
+  IDLE: 'idle',
+  CONNECTING: 'connecting',
+  AUTH_REQUIRED: 'auth_required',
+  RUNNING: 'running',
+  RECONNECTING: 'reconnecting',
+  STOPPED: 'stopped',
+  ERROR: 'error'
+})
 
 function createBotEngine (config = validateConfig(loadConfig())) {
   const cfg = config
@@ -238,6 +250,10 @@ function createBotEngine (config = validateConfig(loadConfig())) {
       botMode,
       pauseReason,
       position,
+      movement,
+      lookAt,
+      botMode,
+      pauseReason,
       build: buildStatus,
       inventory: inventorySnapshot,
       refill
@@ -691,12 +707,79 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     if (accepted) safeStop('Stop requested by controller')
     return accepted
   }
+
+  async function reconnectNow () {
+    reconnectScheduled = false
+    nextReconnectDelayMs = null
+    nextReconnectAt = null
+    reconnectWindowStartedAt = null
+    reconnectWindowEndsAt = null
+    setLifecycleState(LIFECYCLE_STATES.CONNECTING)
+    connect()
+    emitStatus()
+    return {
+      accepted: true,
+      connected: Boolean(bot && bot.player),
+      message: 'Reconnect initiated'
+    }
+  }
+
+  async function forceRefillNow () {
+    const refilled = await refillManager.tryOpportunisticRefill(true)
+    emitStatus()
+    return {
+      accepted: true,
+      refilled,
+      refill: refillManager.getRefillStatus(),
+      message: refilled ? 'Refill completed from nearby container' : 'No refill performed; no suitable nearby container or nothing to withdraw'
+    }
+  }
+
+  async function returnHome () {
+    await moveToSafePlatform()
+    await bot.look(yawFromDegrees(cfg.facingYawDegrees), 0, true)
+    emitStatus()
+    return {
+      accepted: true,
+      position: bot && bot.entity && bot.entity.position
+        ? { x: bot.entity.position.x, y: bot.entity.position.y, z: bot.entity.position.z }
+        : null,
+      message: 'Moved to safe platform'
+    }
+  }
+
+  function openCheckpoint () {
+    const snapshot = checkpointManager.getSnapshot()
+    return {
+      accepted: true,
+      checkpoint: snapshot,
+      message: snapshot.exists ? 'Checkpoint snapshot loaded' : 'Checkpoint file not found'
+    }
+  }
+
   function getStatus () {
     return getStatusPayload()
   }
 
   function handleReconnect (reason) {
     if (isStopping || reconnectScheduled) return
+    if (!reconnectWindowStartedAt) {
+      reconnectWindowStartedAt = Date.now()
+      reconnectWindowEndsAt = reconnectWindowStartedAt + MAX_RECONNECT_WINDOW_MS
+    }
+
+    const now = Date.now()
+    const windowRemainingMs = reconnectWindowEndsAt - now
+    if (windowRemainingMs <= 0) {
+      reconnectScheduled = false
+      nextReconnectAt = null
+      nextReconnectDelayMs = null
+      reportError(`Reconnect window exceeded after ${reconnectAttempts} attempts. Manual reconnect required.`)
+      setLifecycleState(LIFECYCLE_STATES.ERROR)
+      emitStatus()
+      return
+    }
+
     reconnectScheduled = true
     reconnectAttempts += 1
     if (reconnectWindowStartedAt == null) reconnectWindowStartedAt = Date.now()
@@ -704,12 +787,14 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     const delay = Math.min(Math.floor(baseDelay), MAX_RECONNECT_DELAY)
     nextReconnectDelayMs = delay
     nextReconnectAt = Date.now() + delay
+    setLifecycleState(LIFECYCLE_STATES.RECONNECTING)
     log(`Lost connection (${reason}). Attempt ${reconnectAttempts}. Reconnecting in ${Math.floor(delay / 1000)}s`)
     setLifecycleState('reconnecting')
     setTimeout(() => {
       reconnectScheduled = false
       nextReconnectDelayMs = null
       nextReconnectAt = null
+      setLifecycleState(LIFECYCLE_STATES.CONNECTING)
       connect()
     }, delay)
   }
@@ -722,6 +807,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
       reconnectWindowStartedAt = null
       connectionStartedAt = Date.now()
       lastUptimeMs = null
+      setLifecycleState(LIFECYCLE_STATES.RUNNING)
       emitStatus()
     })
 
@@ -759,7 +845,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
       log('Disconnected from server.')
       if (connectionStartedAt) lastUptimeMs = Date.now() - connectionStartedAt
       connectionStartedAt = null
-      emitStatus()
+      setLifecycleState(LIFECYCLE_STATES.STOPPED)
       handleReconnect('end')
     })
 
@@ -768,7 +854,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
       reportError(`Kicked from server: ${reason}`)
       if (connectionStartedAt) lastUptimeMs = Date.now() - connectionStartedAt
       connectionStartedAt = null
-      emitStatus()
+      setLifecycleState(isAuthRequiredReason(reason) ? LIFECYCLE_STATES.AUTH_REQUIRED : LIFECYCLE_STATES.ERROR)
       handleReconnect('kicked')
     })
 
@@ -806,6 +892,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     checkpointManager.resetState()
     humanizer.reset()
     refillManager.reset()
+    setLifecycleState(LIFECYCLE_STATES.CONNECTING)
 
     bot = mineflayer.createBot({
       host: cfg.host,
@@ -828,6 +915,10 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     pauseBuild,
     resumeBuild,
     stopBuild,
+    reconnectNow,
+    forceRefillNow,
+    returnHome,
+    openCheckpoint,
     getStatus,
     onLog,
     onStatus,
