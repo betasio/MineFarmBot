@@ -42,7 +42,8 @@ const els = {
   restartBotBtn: document.getElementById('restart-bot-btn'),
   authTypeSelect: document.getElementById('auth-type-select'),
   microsoftEmailGroup: document.getElementById('microsoft-email-group'),
-  offlineUsernameGroup: document.getElementById('offline-username-group')
+  offlineUsernameGroup: document.getElementById('offline-username-group'),
+  placementModeSelect: document.getElementById('placement-mode-select')
 }
 
 const state = {
@@ -129,6 +130,24 @@ function applyAuthVisibility () {
   els.offlineUsernameGroup.classList.toggle('hidden', authType !== 'offline')
 }
 
+function getPlacementModeFromForm () {
+  const raw = String((els.placementModeSelect && els.placementModeSelect.value) || 'manual').toLowerCase()
+  return raw === 'easy_center' ? 'easy_center' : 'manual'
+}
+
+function getPlacementRequiredFields () {
+  return getPlacementModeFromForm() === 'easy_center'
+    ? ['farmSize', 'buildPlacementMode']
+    : ['farmSize', 'buildPlacementMode', 'origin.x', 'origin.y', 'origin.z', 'safePlatform.x', 'safePlatform.y', 'safePlatform.z']
+}
+
+function applyPlacementVisibility () {
+  const manualVisible = getPlacementModeFromForm() !== 'easy_center'
+  document.querySelectorAll('.manual-placement-field').forEach(node => {
+    node.classList.toggle('hidden', !manualVisible)
+  })
+}
+
 function updateConfigHealthBanner () {
   if (!els.configRequiredAlert) return
   const missing = state.missingRequiredFields
@@ -149,7 +168,7 @@ function updateStartButtonEnabled () {
 
 function validateRequiredInForm () {
   const missing = []
-  const requiredFields = [...state.configRequiredFields, ...getAuthRequiredFields()]
+  const requiredFields = [...state.configRequiredFields, ...getAuthRequiredFields(), ...getPlacementRequiredFields()]
   const uniqueFields = [...new Set(requiredFields)]
 
   for (const field of uniqueFields) {
@@ -168,7 +187,7 @@ function validateRequiredInForm () {
 }
 
 function markRequiredConfigFields () {
-  const requiredSet = new Set([...state.configRequiredFields, ...getAuthRequiredFields()])
+  const requiredSet = new Set([...state.configRequiredFields, ...getAuthRequiredFields(), ...getPlacementRequiredFields()])
   for (const input of els.configForm.querySelectorAll('[name]')) {
     const required = requiredSet.has(input.name)
     input.required = required
@@ -180,6 +199,8 @@ function fillConfigForm (cfg) {
   const authType = String(cfg.auth || 'microsoft').toLowerCase() === 'offline' ? 'offline' : 'microsoft'
   if (els.authTypeSelect) els.authTypeSelect.value = authType
   applyAuthVisibility()
+  if (els.placementModeSelect) els.placementModeSelect.value = String(cfg.buildPlacementMode || 'manual').toLowerCase() === 'easy_center' ? 'easy_center' : 'manual'
+  applyPlacementVisibility()
 
   for (const input of els.configForm.querySelectorAll('[name]')) {
     if (input.name === 'microsoftEmail' || input.name === 'offlineUsername') continue
@@ -496,6 +517,18 @@ function setupControls () {
 
   els.authTypeSelect.addEventListener('change', () => {
     applyAuthVisibility()
+    markRequiredConfigFields()
+    const missing = validateRequiredInForm()
+    state.missingRequiredFields = missing
+    updateConfigHealthBanner()
+    updateStartButtonEnabled()
+    els.configMessage.textContent = missing.length > 0
+      ? `Missing required fields: ${missing.join(', ')}`
+      : 'All required fields are present.'
+  })
+
+  els.placementModeSelect.addEventListener('change', () => {
+    applyPlacementVisibility()
     markRequiredConfigFields()
     const missing = validateRequiredInForm()
     state.missingRequiredFields = missing

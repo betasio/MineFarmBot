@@ -10,16 +10,12 @@ const MAX_CONFIG_PAYLOAD_BYTES = 8192
 const SSE_HEARTBEAT_MS = 15000
 const CONTROL_RATE_LIMIT_WINDOW_MS = 5000
 const CONTROL_RATE_LIMIT_MAX_REQUESTS = 8
-const REQUIRED_CONFIG_FIELDS = [
+const BASE_REQUIRED_CONFIG_FIELDS = [
   'host',
   'port',
   'auth',
-  'origin.x',
-  'origin.y',
-  'origin.z',
-  'safePlatform.x',
-  'safePlatform.y',
-  'safePlatform.z'
+  'farmSize',
+  'buildPlacementMode'
 ]
 
 function formatSse (event, data) {
@@ -38,9 +34,16 @@ function getByPath (obj, pathStr) {
   return pathStr.split('.').reduce((acc, key) => (acc && Object.prototype.hasOwnProperty.call(acc, key) ? acc[key] : undefined), obj)
 }
 
+function getRequiredConfigFields (config) {
+  const mode = String((config && config.buildPlacementMode) || 'manual').toLowerCase()
+  if (mode === 'easy_center') return BASE_REQUIRED_CONFIG_FIELDS
+  return [...BASE_REQUIRED_CONFIG_FIELDS, 'origin.x', 'origin.y', 'origin.z', 'safePlatform.x', 'safePlatform.y', 'safePlatform.z']
+}
+
 function getMissingRequiredFields (config) {
   const missing = []
-  for (const field of REQUIRED_CONFIG_FIELDS) {
+  const requiredFields = getRequiredConfigFields(config)
+  for (const field of requiredFields) {
     const value = getByPath(config, field)
     if (value == null || value === '' || (typeof value === 'number' && Number.isNaN(value))) missing.push(field)
   }
@@ -192,6 +195,8 @@ const CONFIG_PATCH_SCHEMA = {
   version: { type: ['string', 'boolean'] },
   layers: { type: 'number' },
   buildDelayTicks: { type: 'number' },
+  farmSize: { type: 'number' },
+  buildPlacementMode: { type: 'string' },
   removeScaffold: { type: 'boolean' },
   facingYawDegrees: { type: 'number' },
   origin: {
@@ -359,7 +364,7 @@ function startUiServer ({ engine, cfg }) {
       jsonResponse(res, 200, {
         ok: true,
         config: loaded,
-        requiredFields: REQUIRED_CONFIG_FIELDS,
+        requiredFields: getRequiredConfigFields(validated),
         missingRequiredFields: getMissingRequiredFields(loaded)
       })
       return
@@ -407,7 +412,7 @@ function startUiServer ({ engine, cfg }) {
               ok: false,
               error: 'Required configuration fields are missing.',
               missingRequiredFields,
-              requiredFields: REQUIRED_CONFIG_FIELDS
+              requiredFields: getRequiredConfigFields(validated)
             })
             return
           }
@@ -422,7 +427,7 @@ function startUiServer ({ engine, cfg }) {
           jsonResponse(res, 200, {
             ok: true,
             config: validated,
-            requiredFields: REQUIRED_CONFIG_FIELDS,
+            requiredFields: getRequiredConfigFields(validated),
             missingRequiredFields: [],
             message: 'Configuration saved. Restart bot process to apply connection-level changes.'
           })

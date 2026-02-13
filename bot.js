@@ -30,6 +30,8 @@ const LIFECYCLE_STATES = Object.freeze({
 
 function createBotEngine (config = validateConfig(loadConfig())) {
   const cfg = config
+  let effectiveOrigin = new Vec3(cfg.origin.x, cfg.origin.y, cfg.origin.z)
+  let effectiveSafePlatform = new Vec3(cfg.safePlatform.x, cfg.safePlatform.y, cfg.safePlatform.z)
 
   let bot
   let reconnectAttempts = 0
@@ -118,6 +120,29 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     handleLogEntry(createLogEntry('error', message))
   }
 
+  function getFarmSize () {
+    const parsed = Number(cfg.farmSize)
+    if (!Number.isFinite(parsed)) return 16
+    return Math.max(3, Math.min(64, Math.floor(parsed)))
+  }
+
+  function resolveEffectivePlacementFromCenter () {
+    if (!bot || !bot.entity || !bot.entity.position) return
+    const center = bot.entity.position.floored()
+    const farmSize = getFarmSize()
+    const offset = Math.floor((farmSize - 1) / 2)
+    effectiveOrigin = new Vec3(center.x - offset, center.y, center.z - offset)
+    effectiveSafePlatform = new Vec3(center.x, center.y, center.z)
+    log(`Easy placement active: center=${center.toString()}, farmSize=${farmSize}, origin=${effectiveOrigin.toString()}, safePlatform=${effectiveSafePlatform.toString()}`)
+  }
+
+  function getEffectiveOrigin () {
+    return effectiveOrigin
+  }
+
+  function getEffectiveSafePlatform () {
+    return effectiveSafePlatform
+  }
 
   function formatErrorMessage (err) {
     if (!err) return 'Unknown error'
@@ -278,7 +303,11 @@ function createBotEngine (config = validateConfig(loadConfig())) {
       pauseReason,
       build: buildStatus,
       inventory: inventory.getMaterialCounts(),
-      refill
+      refill,
+      buildPlacementMode: cfg.buildPlacementMode,
+      farmSize: getFarmSize(),
+      effectiveOrigin: { x: effectiveOrigin.x, y: effectiveOrigin.y, z: effectiveOrigin.z },
+      effectiveSafePlatform: { x: effectiveSafePlatform.x, y: effectiveSafePlatform.y, z: effectiveSafePlatform.z }
     }
   }
 
@@ -377,7 +406,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
   }
 
   async function moveToSafePlatform () {
-    const pos = new Vec3(cfg.safePlatform.x, cfg.safePlatform.y, cfg.safePlatform.z)
+    const pos = getEffectiveSafePlatform()
     await bot.pathfinder.goto(new goals.GoalBlock(pos.x, pos.y, pos.z))
     if (!hasSolidFooting()) throw new Error('Safe platform does not provide solid, non-sand footing')
   }
@@ -397,10 +426,11 @@ function createBotEngine (config = validateConfig(loadConfig())) {
 
   function buildGridTasks (origin, layerIndex) {
     const y = origin.y + (layerIndex * 3)
+    const farmSize = getFarmSize()
     const cells = []
-    for (let dz = 0; dz < 16; dz++) {
+    for (let dz = 0; dz < farmSize; dz++) {
       const leftToRight = dz % 2 === 0
-      const xValues = leftToRight ? [...Array(16).keys()] : [...Array(16).keys()].reverse()
+      const xValues = leftToRight ? [...Array(farmSize).keys()] : [...Array(farmSize).keys()].reverse()
       for (const dx of xValues) {
         const scaffoldOffsetX = leftToRight ? 1 : -1
         cells.push({ sandPos: new Vec3(origin.x + dx, y, origin.z + dz), scaffoldOffsetX })
@@ -638,6 +668,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
 
       if (bot.entity.position.distanceTo(initialPos) >= 5) {
         log('Survival transfer stage complete.')
+        if (cfg.buildPlacementMode === 'easy_center') resolveEffectivePlacementFromCenter()
         return
       }
 
@@ -649,6 +680,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
 
     warn('Teleport movement not detected after retries. Continuing with fallback delay.')
     await bot.waitForTicks(100)
+    if (cfg.buildPlacementMode === 'easy_center') resolveEffectivePlacementFromCenter()
   }
 
   const buildController = createBuildController({
@@ -686,7 +718,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     }
 
     try {
-      await buildController.start(new Vec3(cfg.origin.x, cfg.origin.y, cfg.origin.z))
+      await buildController.start(getEffectiveOrigin())
       await moveToSafePlatform()
       await bot.look(yawFromDegrees(cfg.facingYawDegrees), 0, true)
       bot.quit('[MineFarmBot] Build completed successfully')
@@ -818,6 +850,8 @@ function createBotEngine (config = validateConfig(loadConfig())) {
       log(`Config: layers=${cfg.layers}, buildDelayTicks=${cfg.buildDelayTicks}, removeScaffold=${cfg.removeScaffold}`)
 
       try {
+        effectiveOrigin = new Vec3(cfg.origin.x, cfg.origin.y, cfg.origin.z)
+        effectiveSafePlatform = new Vec3(cfg.safePlatform.x, cfg.safePlatform.y, cfg.safePlatform.z)
         setupMovement()
         startLagMonitor()
         setupSafetyHooks()

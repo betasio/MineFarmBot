@@ -108,14 +108,21 @@
           <h4>Build</h4>
           <div class="config-grid">
             <label>Layers<input name="layers" type="number" min="1" /></label>
+            <label>Farm Size (square NxN)<input name="farmSize" type="number" min="3" max="64" /></label>
+            <label>Placement Mode
+              <select name="buildPlacementMode" id="placement-mode-select">
+                <option value="manual">manual (origin + safe platform)</option>
+                <option value="easy_center">easy center (auto from /survival spawn)</option>
+              </select>
+            </label>
             <label>Build Delay Ticks<input name="buildDelayTicks" type="number" min="1" /></label>
             <label>Facing Yaw Degrees<input name="facingYawDegrees" type="number" /></label>
-            <label>Origin X * Required<input name="origin.x" type="number" required /></label>
-            <label>Origin Y * Required<input name="origin.y" type="number" required /></label>
-            <label>Origin Z * Required<input name="origin.z" type="number" required /></label>
-            <label>Safe Platform X * Required<input name="safePlatform.x" type="number" required /></label>
-            <label>Safe Platform Y * Required<input name="safePlatform.y" type="number" required /></label>
-            <label>Safe Platform Z * Required<input name="safePlatform.z" type="number" required /></label>
+            <label class="manual-placement-field">Origin X * Required<input name="origin.x" type="number" required /></label>
+            <label class="manual-placement-field">Origin Y * Required<input name="origin.y" type="number" required /></label>
+            <label class="manual-placement-field">Origin Z * Required<input name="origin.z" type="number" required /></label>
+            <label class="manual-placement-field">Safe Platform X * Required<input name="safePlatform.x" type="number" required /></label>
+            <label class="manual-placement-field">Safe Platform Y * Required<input name="safePlatform.y" type="number" required /></label>
+            <label class="manual-placement-field">Safe Platform Z * Required<input name="safePlatform.z" type="number" required /></label>
             <label class="checkline"><input name="removeScaffold" type="checkbox" /> Remove scaffold</label>
           </div>
         </section>
