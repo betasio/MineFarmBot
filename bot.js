@@ -175,17 +175,39 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     }
   }
 
+
+  function getMovementStatus () {
+    if (!bot || !bot.entity || !bot.entity.velocity) {
+      return {
+        speed: 0,
+        onGround: null,
+        jumpTicks: null,
+        inWater: null,
+        inLava: null
+      }
+    }
+
+    const vx = Number(bot.entity.velocity.x) || 0
+    const vy = Number(bot.entity.velocity.y) || 0
+    const vz = Number(bot.entity.velocity.z) || 0
+    const speed = Math.sqrt((vx * vx) + (vy * vy) + (vz * vz))
+
+    return {
+      speed: Number(speed.toFixed(4)),
+      onGround: typeof bot.entity.onGround === 'boolean' ? bot.entity.onGround : null,
+      jumpTicks: Number.isFinite(Number(bot.entity.jumpTicks)) ? Number(bot.entity.jumpTicks) : null,
+      inWater: typeof bot.entity.isInWater === 'boolean' ? bot.entity.isInWater : null,
+      inLava: typeof bot.entity.isInLava === 'boolean' ? bot.entity.isInLava : null
+    }
+  }
+
   function getStatusPayload () {
     const connected = Boolean(bot && bot.player)
     const position = bot && bot.entity && bot.entity.position
       ? { x: bot.entity.position.x, y: bot.entity.position.y, z: bot.entity.position.z }
       : null
     const uptimeMs = connectionStartedAt ? (Date.now() - connectionStartedAt) : lastUptimeMs
-    const refill = refillManager.getRefillStatus()
-    const lookAt = normalizeLookAtDescriptor()
     const movement = getMovementStatus()
-    const botMode = getBotMode(buildStatus, refill)
-    const pauseReason = getPauseReason(buildStatus, refill)
     return {
       connectionState: getConnectionState(),
       connected,
@@ -203,6 +225,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
       reconnectAt: nextReconnectAt,
       lifecycleState,
       lookAt: normalizeLookAtDescriptor(),
+      movement,
       position,
       movement,
       lookAt,
