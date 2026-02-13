@@ -2,6 +2,7 @@
 
 const fs = require('fs')
 const path = require('path')
+const { PROFILE_SCHEMA_VERSION, migrateConfigFileIfNeeded } = require('./desktop/profileMigrations')
 
 const DEFAULT_CONFIG = {
   host: 'localhost',
@@ -108,11 +109,17 @@ function loadConfig () {
   }
 
   try {
-    const raw = fs.readFileSync(configPath, 'utf8')
-    const parsed = JSON.parse(raw)
+    const migrated = migrateConfigFileIfNeeded({
+      configPath,
+      defaultConfig: DEFAULT_CONFIG,
+      validateConfig
+    })
+    const parsed = migrated.config
+    if (!parsed) return DEFAULT_CONFIG
     return {
       ...DEFAULT_CONFIG,
       ...parsed,
+      schemaVersion: Number.isFinite(parsed.schemaVersion) ? parsed.schemaVersion : PROFILE_SCHEMA_VERSION,
       origin: { ...DEFAULT_CONFIG.origin, ...(parsed.origin || {}) },
       safePlatform: { ...DEFAULT_CONFIG.safePlatform, ...(parsed.safePlatform || {}) },
       gui: { ...DEFAULT_CONFIG.gui, ...(parsed.gui || {}) }

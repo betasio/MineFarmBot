@@ -300,6 +300,7 @@ function startUiServer ({ engine, cfg }) {
         })
         fs.createReadStream(fullPath).pipe(res)
       })
+
       return
     }
 
