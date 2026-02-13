@@ -44,9 +44,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
   let lastUptimeMs = null
   let nextReconnectAt = null
   let nextReconnectDelayMs = null
-  let reconnectWindowStartedAt = null
-  let reconnectWindowEndsAt = null
-  let lifecycleState = LIFECYCLE_STATES.IDLE
+  let safetyHooksArmed = false
 
   const listeners = {
     log: new Set(),
@@ -637,7 +635,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
   function setupSafetyHooks () {
     let lastY = null
     bot.on('physicsTick', () => {
-      if (isStopping) return
+      if (isStopping || !safetyHooksArmed) return
       const y = bot.entity.position.y
       if (lastY != null && (lastY - y) > 1.01) {
         const recovered = buildController.requestRecovery(`Fall detected. drop=${(lastY - y).toFixed(2)} blocks`)
@@ -850,6 +848,8 @@ function createBotEngine (config = validateConfig(loadConfig())) {
         setupSafetyHooks()
         await enterSurvivalFromLobby()
         resolveEasyPlacementFromPlayerPosition()
+        await bot.waitForTicks(30)
+        safetyHooksArmed = true
 
         if (!hasSolidFooting()) {
           warn('Bot spawned without solid non-sand footing. Fix position, then run start.')
@@ -902,6 +902,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     lastUptimeMs = null
     nextReconnectDelayMs = null
     nextReconnectAt = null
+    safetyHooksArmed = false
     checkpointManager.resetState()
     humanizer.reset()
     refillManager.reset()

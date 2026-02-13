@@ -167,10 +167,12 @@ function resolveGuiUrlFromProfile (profileId) {
 function parseMsaPrompt (text) {
   const codeMatch = text.match(/use the code\s+([A-Z0-9]+)/i)
   const urlMatch = text.match(/https?:\/\/[^\s]+/i)
-  if (!codeMatch && !urlMatch) return null
+  const url = urlMatch ? urlMatch[0] : null
+  const isMicrosoftLink = Boolean(url && /microsoft\.com\/link|login\.live\.com|microsoftonline\.com/i.test(url))
+  if (!codeMatch && !isMicrosoftLink) return null
   return {
     code: codeMatch ? codeMatch[1] : null,
-    url: urlMatch ? urlMatch[0] : 'https://www.microsoft.com/link'
+    url: isMicrosoftLink ? url : 'https://www.microsoft.com/link'
   }
 }
 
