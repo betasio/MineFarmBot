@@ -136,7 +136,7 @@ function resolveGuiUrlFromProfile (profileId) {
   return `http://${uiHost}:${port}`
 }
 
-function parseMsaPrompt (text) {
+function extractMsaCode (text) {
   const codeMatch = text.match(/use the code\s+([A-Z0-9]+)/i)
   const urlMatch = text.match(/https?:\/\/[^\s]+/i)
   if (!codeMatch && !urlMatch) return null
@@ -151,23 +151,25 @@ function startBotProcess (profileId) {
   const cfgPath = profileConfigPath(profileId)
   const checkpointPath = profileCheckpointPath(profileId)
 
+  const botSpawnEnv = {
+    ...process.env,
+    ELECTRON_RUN_AS_NODE: '1',
+    MINEFARMBOT_DESKTOP: '1',
+    BOT_CONFIG_PATH: cfgPath,
+    BOT_CHECKPOINT_PATH: checkpointPath
+  }
+
   botProcess = spawn(process.execPath, [botEntry], {
     cwd: path.join(__dirname, '..'),
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: {
-      ...process.env,
-      ELECTRON_RUN_AS_NODE: '1',
-      MINEFARMBOT_DESKTOP: '1',
-      BOT_CONFIG_PATH: cfgPath,
-      BOT_CHECKPOINT_PATH: checkpointPath
-    }
+    env: botSpawnEnv
   })
 
   const onOutput = (prefix, chunk) => {
     const text = chunk.toString()
     process.stdout.write(`${prefix}${text}`)
 
-    const msa = parseMsaPrompt(text)
+    const msa = extractMsaCode(text)
     if (msa && mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('desktop:msa-code', msa)
       shell.openExternal(msa.url).catch(() => {})
@@ -379,37 +381,49 @@ if (!gotSingleInstanceLock) {
   })
 }
 
-ipcMain.handle('desktop:list-profiles', async () => ({ ok: true, profiles: listProfiles() }))
-ipcMain.handle('desktop:create-profile', async (_event, payload) => {
+const handleListProfiles = async () => ({ ok: true, profiles: listProfiles() })
+const handleCreateProfile = async (_event, payload) => {
   try {
     const created = createProfile(payload || {})
     return { ok: true, profile: created, profiles: listProfiles() }
   } catch (err) {
     return { ok: false, error: err.message || String(err) }
   }
-})
-ipcMain.handle('desktop:launch-profile', async (_event, profileId) => {
+}
+const handleLaunchProfile = async (_event, profileId) => {
   try {
     await launchProfile(profileId)
     return { ok: true }
   } catch (err) {
     return { ok: false, error: err.message || String(err) }
   }
-})
-ipcMain.handle('desktop:restart-bot', async () => {
+}
+const handleRestartBot = async () => {
   try {
     await restartBotProcess()
     return { ok: true }
   } catch (err) {
     return { ok: false, error: err.message || String(err) }
   }
-})
-ipcMain.handle('desktop:stop-bot', async () => {
+}
+const handleStopBot = async () => {
   stopBotProcess()
   currentProfileId = null
   await loadLauncher()
   return { ok: true }
-})
+}
+
+ipcMain.handle('desktop:listProfiles', handleListProfiles)
+ipcMain.handle('desktop:createProfile', handleCreateProfile)
+ipcMain.handle('desktop:launchProfile', handleLaunchProfile)
+ipcMain.handle('desktop:restartBot', handleRestartBot)
+ipcMain.handle('desktop:stopBot', handleStopBot)
+
+ipcMain.handle('desktop:list-profiles', handleListProfiles)
+ipcMain.handle('desktop:create-profile', handleCreateProfile)
+ipcMain.handle('desktop:launch-profile', handleLaunchProfile)
+ipcMain.handle('desktop:restart-bot', handleRestartBot)
+ipcMain.handle('desktop:stop-bot', handleStopBot)
 
 app.whenReady().then(async () => {
   shutdownRequested = false
@@ -437,3 +451,17 @@ app.on('activate', () => {
     mainWindow.focus()
   }
 })
+
+if (process.env.NODE_ENV === 'test') {
+  module.exports = {
+    __testHooks: {
+      launchProfile,
+      extractMsaCode,
+      startBotProcess,
+      stopBotProcess,
+      restartBotProcess,
+      listProfiles,
+      createProfile
+    }
+  }
+}
