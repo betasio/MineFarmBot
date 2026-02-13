@@ -225,6 +225,8 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     const pauseReason = buildStatus && typeof buildStatus.pauseReason === 'string'
       ? buildStatus.pauseReason
       : null
+    const inventorySnapshot = inventory.getMaterialCounts()
+    const refill = refillManager.getRefillStatus()
     return {
       connectionState: getConnectionState(),
       connected,
@@ -251,7 +253,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
       botMode,
       pauseReason,
       build: buildStatus,
-      inventory: inventory.getMaterialCounts(),
+      inventory: inventorySnapshot,
       refill
     }
   }
