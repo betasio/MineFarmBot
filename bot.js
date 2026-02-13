@@ -103,6 +103,20 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     handleLogEntry(createLogEntry('error', message))
   }
 
+
+  function formatErrorMessage (err) {
+    if (!err) return 'Unknown error'
+    if (typeof err.message === 'string' && err.message.trim().length > 0) return err.message
+    if (Array.isArray(err.errors) && err.errors.length > 0) {
+      const first = err.errors[0]
+      if (first && typeof first.message === 'string' && first.message.trim().length > 0) {
+        return first.message
+      }
+    }
+    if (typeof err.code === 'string' && err.code.length > 0) return err.code
+    return String(err)
+  }
+
   const checkpointManager = createCheckpointManager(cfg.layers)
 
   function getBot () {
@@ -358,6 +372,22 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     }
   }
 
+
+
+  async function verifyCellPlacement (sandPos, scaffoldOffsetX) {
+    if (isCellCompleted(sandPos, scaffoldOffsetX)) return true
+    await sleepTicks(2)
+    return isCellCompleted(sandPos, scaffoldOffsetX)
+  }
+
+  async function recoverToCheckpointState ({ origin, checkpoint }) {
+    warn(`Recovery: navigating to safe platform and resuming from checkpoint layer=${checkpoint.layer}, cell=${checkpoint.cell}`)
+    await moveToSafePlatform()
+    if (checkpoint.layer < cfg.layers) {
+      await ensureVerticalSpine(origin, checkpoint.layer)
+    }
+  }
+
   async function moveOffScaffoldIfNeeded (scaffoldPos, sandPos, scaffoldOffsetX) {
     if (!bot.entity.position.floored().equals(scaffoldPos)) return
     const candidates = [
@@ -467,7 +497,10 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     bot.on('physicsTick', () => {
       if (isStopping) return
       const y = bot.entity.position.y
-      if (lastY != null && (lastY - y) > 1.01) safeStop(`Fall detected. drop=${(lastY - y).toFixed(2)} blocks`)
+      if (lastY != null && (lastY - y) > 1.01) {
+        const recovered = buildController.requestRecovery(`Fall detected. drop=${(lastY - y).toFixed(2)} blocks`)
+        if (!recovered) safeStop(`Fall detected. drop=${(lastY - y).toFixed(2)} blocks`)
+      }
       lastY = y
     })
   }
@@ -511,6 +544,8 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     buildGridTasks,
     ensureVerticalSpine,
     placeCactusStack,
+    verifyCellPlacement,
+    performRecovery: recoverToCheckpointState,
     onLog: entry => handleLogEntry(entry)
   })
 
@@ -622,11 +657,12 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     })
 
     bot.on('error', err => {
-      reportError(err.message)
+      const message = formatErrorMessage(err)
+      reportError(message)
       if (connectionStartedAt) lastUptimeMs = Date.now() - connectionStartedAt
       connectionStartedAt = null
       emitStatus()
-      handleReconnect(`error: ${err.message}`)
+      handleReconnect(`error: ${message}`)
     })
   }
 
@@ -660,8 +696,8 @@ function createBotEngine (config = validateConfig(loadConfig())) {
       version: cfg.version || undefined
     })
 
-    bot.loadPlugin(pathfinder)
     registerBotEvents()
+    bot.loadPlugin(pathfinder)
   }
 
   if (!statusInterval) statusInterval = setInterval(emitStatus, 1000)
@@ -685,6 +721,22 @@ function runCli () {
   const engine = createBotEngine(cfg)
   engine.connect()
   const uiServer = startUiServer({ engine, cfg })
+
+  function handleRuntimeFailure (kind, err) {
+    const message = err && err.message ? err.message : String(err)
+    console.error(`[RUNTIME] ${kind}: ${message}`)
+    setTimeout(() => {
+      try {
+        console.log('[RUNTIME] Attempting recovery reconnect...')
+        engine.connect()
+      } catch (recoverErr) {
+        console.error(`[RUNTIME] Recovery reconnect failed: ${recoverErr.message || recoverErr}`)
+      }
+    }, 3000)
+  }
+
+  process.on('unhandledRejection', reason => handleRuntimeFailure('Unhandled rejection', reason))
+  process.on('uncaughtException', err => handleRuntimeFailure('Uncaught exception', err))
 
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
   console.log('[CLI] Commands: start | pause | resume | stop | status | quit')
