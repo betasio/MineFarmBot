@@ -160,6 +160,21 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     return true
   }
 
+
+  function normalizeLookAtDescriptor () {
+    if (!bot || !bot.entity || !bot.entity.position) return null
+    const yaw = Number(bot.entity.yaw)
+    const pitch = Number(bot.entity.pitch)
+    return {
+      yaw: Number.isFinite(yaw) ? yaw : null,
+      pitch: Number.isFinite(pitch) ? pitch : null,
+      facingYawDegrees: Number.isFinite(yaw) ? Number((yaw * 180 / Math.PI).toFixed(2)) : null,
+      x: bot.entity.position.x,
+      y: bot.entity.position.y,
+      z: bot.entity.position.z
+    }
+  }
+
   function getStatusPayload () {
     const connected = Boolean(bot && bot.player)
     const position = bot && bot.entity && bot.entity.position
@@ -187,6 +202,7 @@ function createBotEngine (config = validateConfig(loadConfig())) {
       reconnectDelayMs: nextReconnectDelayMs,
       reconnectAt: nextReconnectAt,
       lifecycleState,
+      lookAt: normalizeLookAtDescriptor(),
       position,
       movement,
       lookAt,
