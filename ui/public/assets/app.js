@@ -329,26 +329,15 @@ function renderDynamicTimeFields () {
 
 function updateStatus (status) {
   state.statusSnapshot = status
-  const lifecycleState = String(status.lifecycleState || '').toLowerCase()
-  const connectionState = lifecycleState || status.connectionState || 'idle'
-  const connectionCss = {
-    idle: 'offline',
-    connecting: 'reconnecting',
-    auth_required: 'reconnecting',
-    running: 'online',
-    reconnecting: 'reconnecting',
-    stopped: 'offline',
-    error: 'offline',
-    online: 'online',
-    offline: 'offline'
-  }[connectionState] || 'offline'
+  const connectionState = status.connectionState || 'offline'
+  const connectionCss = ['online', 'reconnecting', 'offline'].includes(connectionState) ? connectionState : 'offline'
   els.connectionBadge.textContent = connectionState.toUpperCase()
   els.connectionBadge.className = `badge ${connectionCss}`
 
   els.serverMeta.textContent = `Server: ${status.host}:${status.port} | Bot: ${status.username}`
   els.pingValue.textContent = typeof status.ping === 'number' ? `${status.ping} ms` : '--'
   els.lagValue.textContent = status.lagMode ? 'ON' : 'OFF'
-  els.reconnectValue.textContent = `${status.retry && Number.isFinite(status.retry.attempt) ? status.retry.attempt : (status.reconnectAttempts || 0)}`
+  els.reconnectValue.textContent = `${status.reconnectAttempts || 0}`
   els.uptimeValue.textContent = formatDuration(status.uptimeMs)
 
   const build = status.build || {}
@@ -550,23 +539,6 @@ function setupEventStream () {
   state.eventStream.onerror = () => appendLog({ level: 'warn', message: 'Event stream interrupted. Browser will retry automatically.', timestamp: Date.now() })
 }
 
-function setupDesktopEvents () {
-  if (!isDesktopApp()) return
-
-  window.minefarmDesktop.onStatus(status => updateStatus(status))
-  window.minefarmDesktop.onLog(entry => appendLog(entry))
-  window.minefarmDesktop.onWarning(entry => appendLog(entry))
-  window.minefarmDesktop.onError(entry => onErrorEvent(entry))
-  window.minefarmDesktop.onStatusTransition(event => {
-    if (!event || !event.current) return
-    appendLog({
-      level: 'info',
-      message: `Lifecycle state changed: ${String(event.previous || 'none')} → ${String(event.current)}`,
-      timestamp: event.timestamp || Date.now()
-    })
-  })
-}
-
 async function init () {
   setupControls()
 
@@ -580,8 +552,7 @@ async function init () {
   ])
 
   updateStatus(status)
-  if (isDesktopApp()) setupDesktopEvents()
-  else setupEventStream()
+  setupEventStream()
   state.updateTicker = setInterval(renderDynamicTimeFields, 1000)
 
   window.addEventListener('beforeunload', () => {
