@@ -2,15 +2,47 @@
   "name": "minefarmbot",
   "version": "1.0.0",
   "description": "Mineflayer cactus farm layer builder for survival economy servers",
-  "main": "bot.js",
+  "main": "desktop/main.js",
   "scripts": {
-    "start": "node bot.js",
-    "check": "node --check bot.js && node scripts/check-duplicate-functions.js",
-    "check:structure": "node scripts/check-duplicate-functions.js"
+    "start": "npm run start:cli",
+    "check": "node scripts/check-syntax-all.js && node scripts/check-duplicate-functions.js",
+    "check:structure": "node scripts/check-duplicate-functions.js",
+    "check:syntax": "node scripts/check-syntax-all.js",
+    "start:cli": "node bot.js",
+    "start:desktop": "electron desktop/main.js",
+    "dist:win": "electron-builder --win portable"
   },
   "dependencies": {
     "mineflayer": "^4.20.1",
     "mineflayer-pathfinder": "^2.4.5",
     "vec3": "^0.1.10"
+  },
+  "devDependencies": {
+    "electron": "^32.1.2",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.minefarmbot.desktop",
+    "productName": "MineFarmBot",
+    "files": [
+      "bot.js",
+      "buildController.js",
+      "checkpoint.js",
+      "config.js",
+      "config.example.json",
+      "humanizer.js",
+      "inventory.js",
+      "refillManager.js",
+      "ui/**/*",
+      "desktop/**/*",
+      "package.json",
+      "README.md"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        "portable"
+      ]
+    }
   }
 }

@@ -10,12 +10,16 @@ function createBuildController ({
   buildGridTasks,
   ensureVerticalSpine,
   placeCactusStack,
+  verifyCellPlacement = async () => true,
+  performRecovery = async () => {},
   onLog = () => {}
 }) {
   const emitter = new EventEmitter()
   let state = 'idle'
   let runPromise = null
   let stopRequested = false
+  let recoveryRequested = false
+  let recoveryReason = null
   let progress = {
     layer: 0,
     layersTotal: cfg.layers,
@@ -29,7 +33,8 @@ function createBuildController ({
     lastPlacementAt: null,
     totalPlaced: 0,
     placementTimestamps: [],
-    lastLayerCellCount: 0
+    lastLayerCellCount: 0,
+    lastCheckpointAt: null
   }
 
   function resetMetrics () {
@@ -38,7 +43,8 @@ function createBuildController ({
       lastPlacementAt: null,
       totalPlaced: 0,
       placementTimestamps: [],
-      lastLayerCellCount: 0
+      lastLayerCellCount: 0,
+      lastCheckpointAt: null
     }
   }
 
@@ -102,12 +108,75 @@ function createBuildController ({
     }
   }
 
-  async function runBuildLoop (origin) {
-    const checkpoint = checkpointManager.loadCheckpoint()
+  function isPathfinderFailure (err) {
+    const message = String(err && err.message ? err.message : '').toLowerCase()
+    return message.includes('path') || message.includes('goal') || message.includes('find')
+  }
 
-    for (let layer = checkpoint.layer; layer < cfg.layers; layer++) {
+  function saveCheckpoint (layer, cell) {
+    checkpointManager.saveCheckpoint(layer, cell)
+    buildMetrics.lastCheckpointAt = Date.now()
+  }
+
+  async function placeAndVerifyCell (task, layer, i, cellsLength) {
+    const nextCell = i + 1
+
+    try {
+      await placeCactusStack(task.sandPos, task.scaffoldOffsetX)
+    } catch (err) {
+      if (!isPathfinderFailure(err)) throw err
+      emitLog('warn', `Primary path failed at layer ${layer + 1} cell ${nextCell}. Retrying alternate route.`)
+      await placeCactusStack(task.sandPos, -task.scaffoldOffsetX)
+    }
+
+    let verified = await verifyCellPlacement(task.sandPos, task.scaffoldOffsetX)
+    if (!verified) {
+      emitLog('warn', `Verification mismatch at layer ${layer + 1} cell ${nextCell}. Re-attempting placement once.`)
+      await placeCactusStack(task.sandPos, task.scaffoldOffsetX)
+      verified = await verifyCellPlacement(task.sandPos, task.scaffoldOffsetX)
+    }
+
+    if (!verified) {
+      throw new Error(`Build verification failed at layer ${layer + 1} cell ${nextCell}`)
+    }
+
+    await refillManager.tryOpportunisticRefill(false)
+    recordPlacement()
+
+    updateProgress({
+      cell: nextCell,
+      status: `layer ${layer + 1}/${cfg.layers}, cell ${nextCell}/${cellsLength}`
+    })
+
+    if (nextCell >= cellsLength) {
+      saveCheckpoint(layer + 1, 0)
+    } else {
+      saveCheckpoint(layer, nextCell)
+    }
+  }
+
+  async function recoverToCheckpoint (origin) {
+    const checkpoint = checkpointManager.loadCheckpoint()
+    emitLog('warn', `Recovery triggered: ${recoveryReason || 'unspecified'}. Returning to checkpoint layer=${checkpoint.layer}, cell=${checkpoint.cell}`)
+    recoveryRequested = false
+    recoveryReason = null
+    await performRecovery({ origin, checkpoint })
+    return checkpoint
+  }
+
+  async function runBuildLoop (origin) {
+    let checkpoint = checkpointManager.loadCheckpoint()
+    let layer = checkpoint.layer
+
+    while (layer < cfg.layers) {
       throwIfStopping()
       await waitIfPaused()
+
+      if (recoveryRequested) {
+        checkpoint = await recoverToCheckpoint(origin)
+        layer = checkpoint.layer
+        continue
+      }
 
       const layerY = origin.y + (layer * 3)
       if (layerY > 319) {
@@ -128,14 +197,22 @@ function createBuildController ({
       inventory.requireCobblestoneForLayer(layer)
       const cells = buildGridTasks(origin, layer)
       buildMetrics.lastLayerCellCount = cells.length
-      const startCell = layer === checkpoint.layer ? checkpoint.cell : 0
-      const remainingFromStart = cells.length - startCell
-      updateProgress({ cellsTotal: cells.length, cell: startCell })
-      await refillManager.ensureInventoryForRemaining(remainingFromStart)
 
+      const startCell = (layer === checkpoint.layer) ? checkpoint.cell : 0
+      updateProgress({ cellsTotal: cells.length, cell: startCell })
+      await refillManager.ensureInventoryForRemaining(cells.length - startCell)
+
+      let recovered = false
       for (let i = startCell; i < cells.length; i++) {
         throwIfStopping()
         await waitIfPaused()
+
+        if (recoveryRequested) {
+          checkpoint = await recoverToCheckpoint(origin)
+          layer = checkpoint.layer
+          recovered = true
+          break
+        }
 
         const remaining = cells.length - i
         if (remaining % 16 === 0) {
@@ -143,24 +220,13 @@ function createBuildController ({
         }
 
         const task = cells[i]
-        await placeCactusStack(task.sandPos, task.scaffoldOffsetX)
-        await refillManager.tryOpportunisticRefill(false)
-        recordPlacement()
-
-        const nextCell = i + 1
-        updateProgress({
-          cell: nextCell,
-          status: `layer ${layer + 1}/${cfg.layers}, cell ${nextCell}/${cells.length}`
-        })
-
-        if (nextCell % 16 === 0) {
-          if (nextCell >= cells.length) {
-            checkpointManager.saveCheckpoint(layer + 1, 0)
-          } else {
-            checkpointManager.saveCheckpoint(layer, nextCell)
-          }
-        }
+        await placeAndVerifyCell(task, layer, i, cells.length)
       }
+
+      if (recovered) continue
+
+      layer += 1
+      checkpoint = { layer, cell: 0 }
     }
 
     checkpointManager.clearCheckpoint()
@@ -173,6 +239,8 @@ function createBuildController ({
     }
 
     stopRequested = false
+    recoveryRequested = false
+    recoveryReason = null
     resetMetrics()
     setState('running', 'running')
 
@@ -224,6 +292,14 @@ function createBuildController ({
     return true
   }
 
+  function requestRecovery (reason = 'requested') {
+    if (state !== 'running' && state !== 'paused') return false
+    recoveryRequested = true
+    recoveryReason = reason
+    emitLog('warn', `Recovery requested: ${reason}`)
+    return true
+  }
+
   function getStatus () {
     const placementsPerMinute = getPlacementsPerMinute()
     const remainingInfo = estimateRemainingCells()
@@ -231,6 +307,8 @@ function createBuildController ({
     return {
       state,
       stopRequested,
+      recoveryRequested,
+      recoveryReason,
       ...progress,
       metrics: {
         placementsPerMinute,
@@ -239,7 +317,8 @@ function createBuildController ({
         estimatedTotalCells: remainingInfo ? remainingInfo.estimatedTotalCells : null,
         remainingCells: remainingInfo ? remainingInfo.remaining : null,
         startedAt: buildMetrics.startedAt,
-        lastPlacementAt: buildMetrics.lastPlacementAt
+        lastPlacementAt: buildMetrics.lastPlacementAt,
+        lastCheckpointAt: buildMetrics.lastCheckpointAt
       }
     }
   }
@@ -249,6 +328,7 @@ function createBuildController ({
     pause,
     resume,
     stop,
+    requestRecovery,
     getStatus,
     on: (...args) => emitter.on(...args)
   }

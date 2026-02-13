@@ -31,6 +31,13 @@ const DEFAULT_CONFIG = {
   }
 }
 
+function resolveConfigPath () {
+  if (process.env.BOT_CONFIG_PATH && process.env.BOT_CONFIG_PATH.trim().length > 0) {
+    return process.env.BOT_CONFIG_PATH.trim()
+  }
+  return path.join(process.cwd(), 'config.json')
+}
+
 function clampInteger (value, min, max, fallback) {
   const num = Number(value)
   if (!Number.isFinite(num)) return fallback
@@ -90,9 +97,9 @@ function validateConfig (config) {
 }
 
 function loadConfig () {
-  const configPath = path.join(process.cwd(), 'config.json')
+  const configPath = resolveConfigPath()
   if (!fs.existsSync(configPath)) {
-    console.warn('[WARN] config.json not found. Falling back to defaults.')
+    console.warn(`[WARN] ${path.basename(configPath)} not found. Falling back to defaults.`)
     return DEFAULT_CONFIG
   }
 
@@ -107,13 +114,14 @@ function loadConfig () {
       gui: { ...DEFAULT_CONFIG.gui, ...(parsed.gui || {}) }
     }
   } catch (err) {
-    console.warn(`[WARN] Failed to parse config.json: ${err.message}. Falling back to defaults.`)
+    console.warn(`[WARN] Failed to parse ${path.basename(configPath)}: ${err.message}. Falling back to defaults.`)
     return DEFAULT_CONFIG
   }
 }
 
 module.exports = {
   DEFAULT_CONFIG,
+  resolveConfigPath,
   clampInteger,
   validateConfig,
   loadConfig
