@@ -6,6 +6,7 @@ const path = require('path')
 const fs = require('fs')
 
 const { DEFAULT_CONFIG, validateConfig } = require('../config')
+const { PROFILE_SCHEMA_VERSION, migrateProfileFiles, writeJsonAtomic } = require('./profileMigrations')
 
 let mainWindow = null
 let botProcess = null
@@ -53,13 +54,24 @@ function readProfileMeta (profileId) {
   }
 }
 
+function migrateProfile (profileId) {
+  return migrateProfileFiles({
+    profileId,
+    metaPath: profileMetaPath(profileId),
+    configPath: profileConfigPath(profileId),
+    defaultConfig: DEFAULT_CONFIG,
+    validateConfig
+  })
+}
+
 function listProfiles () {
   ensureProfilesDir()
   const entries = fs.readdirSync(profilesDir, { withFileTypes: true })
     .filter(entry => entry.isDirectory())
     .map(entry => {
       const id = entry.name
-      const meta = readProfileMeta(id) || { id, name: id, auth: 'microsoft', createdAt: Date.now(), updatedAt: Date.now() }
+      const migrated = migrateProfile(id)
+      const meta = migrated.meta || { schemaVersion: PROFILE_SCHEMA_VERSION, id, name: id, auth: 'microsoft', createdAt: Date.now(), updatedAt: Date.now() }
       const checkpointFile = profileCheckpointPath(id)
       let checkpoint = null
       if (fs.existsSync(checkpointFile)) {
@@ -114,8 +126,12 @@ function createProfile (payload) {
     }
   })
 
-  fs.writeFileSync(profileConfigPath(id), `${JSON.stringify(config, null, 2)}\n`, 'utf8')
-  fs.writeFileSync(profileMetaPath(id), JSON.stringify({
+  writeJsonAtomic(profileConfigPath(id), {
+    ...config,
+    schemaVersion: PROFILE_SCHEMA_VERSION
+  })
+  writeJsonAtomic(profileMetaPath(id), {
+    schemaVersion: PROFILE_SCHEMA_VERSION,
     id,
     name: profileName,
     auth,
@@ -123,7 +139,7 @@ function createProfile (payload) {
     username: config.username,
     createdAt: now,
     updatedAt: now
-  }, null, 2), 'utf8')
+  })
 
   return { id, name: profileName }
 }
@@ -211,6 +227,7 @@ async function restartBotProcess () {
 
 async function launchProfile (profileId) {
   if (!profileId) throw new Error('Profile id is required')
+  migrateProfile(profileId)
   if (!fs.existsSync(profileConfigPath(profileId))) throw new Error('Profile config not found')
 
   currentProfileId = profileId
@@ -224,7 +241,10 @@ async function launchProfile (profileId) {
   const meta = readProfileMeta(profileId)
   if (meta) {
     meta.updatedAt = Date.now()
-    fs.writeFileSync(profileMetaPath(profileId), JSON.stringify(meta, null, 2), 'utf8')
+    writeJsonAtomic(profileMetaPath(profileId), {
+      ...meta,
+      schemaVersion: PROFILE_SCHEMA_VERSION
+    })
   }
 
   return { ok: true }
