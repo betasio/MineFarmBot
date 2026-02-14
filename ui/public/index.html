@@ -116,9 +116,9 @@
                 <option value="easy">easy (center spawn)</option>
               </select>
             </label>
-            <label>Farm Size (square)<input name="farmSize" type="number" min="3" max="64" /></label>
+            <label>Farm Size (square, odd only)<input name="farmSize" type="number" min="3" max="63" step="2" /></label>
           </div>
-          <p class="help-text">Farm size is square only (for example 9 = 9x9). In manual mode, provide two diagonal corners; safe platform is auto-set to farm center.</p>
+          <p class="help-text">Farm size is square + odd only (for example 9 = 9x9). Even sizes are auto-adjusted to the next odd size. In manual mode, provide two diagonal corners; safe platform is auto-set to farm center.</p>
           <div class="config-grid" id="manual-placement-group">
             <label>1st Corner X * Required<input name="manualCornerA.x" type="number" required /></label>
             <label>1st Corner Y * Required<input name="manualCornerA.y" type="number" required /></label>

@@ -376,7 +376,11 @@ function createBotEngine (config = validateConfig(loadConfig())) {
 
   function buildGridTasks (origin, layerIndex) {
     const y = origin.y + (layerIndex * 3)
+<<<<<<< codex/build-gui-for-minefarmbot-pfl97s
+    const size = Math.max(3, Number(cfg.farmSize) || 9)
+=======
     const size = Math.max(3, Number(cfg.farmSize) || 16)
+>>>>>>> main
     const cells = []
     for (let dz = 0; dz < size; dz++) {
       const leftToRight = dz % 2 === 0
@@ -393,7 +397,11 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     const placementMode = String(cfg.placementMode || 'manual').toLowerCase()
     if (placementMode !== 'easy') return
 
+<<<<<<< codex/build-gui-for-minefarmbot-pfl97s
+    const size = Math.max(3, Number(cfg.farmSize) || 9)
+=======
     const size = Math.max(3, Number(cfg.farmSize) || 16)
+>>>>>>> main
     const center = bot.entity.position.floored()
     const half = Math.floor(size / 2)
     const origin = {
@@ -423,8 +431,9 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     await bot.pathfinder.goto(new goals.GoalGetToBlock(target.x, target.y + 1, target.z))
 
     const standing = bot.entity.position.floored()
-    if (standing.x !== target.x || standing.z !== target.z || Math.abs(standing.y - target.y) > 1) {
-      throw new Error(`Pathfinder stopped at ${standing.toString()} instead of ${target.toString()}`)
+    const horizontal = Math.hypot(standing.x - target.x, standing.z - target.z)
+    if (horizontal > 1.5 || Math.abs(standing.y - target.y) > 1) {
+      throw new Error(`Pathfinder stopped at ${standing.toString()} instead of near ${target.toString()}`)
     }
     if (!hasSolidFooting()) throw new Error(`Unsafe footing at ${bot.entity.position.floored().toString()}`)
     const below = bot.blockAt(bot.entity.position.offset(0, -1, 0).floored())
