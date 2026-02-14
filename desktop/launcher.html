@@ -23,9 +23,6 @@
       .loading-box { margin-top:10px; border:1px solid #4b6a93; background:#142035; padding:10px; border-radius:8px; }
       .spinner { display:inline-block; width:14px; height:14px; border:2px solid #8cb4f0; border-top-color:transparent; border-radius:50%; animation:spin 1s linear infinite; vertical-align:middle; margin-right:8px; }
       @keyframes spin { to { transform: rotate(360deg); } }
-      .loading-box { margin-top:10px; border:1px solid #4b6a93; background:#142035; padding:10px; border-radius:8px; }
-      .spinner { display:inline-block; width:14px; height:14px; border:2px solid #8cb4f0; border-top-color:transparent; border-radius:50%; animation:spin 1s linear infinite; vertical-align:middle; margin-right:8px; }
-      @keyframes spin { to { transform: rotate(360deg); } }
     </style>
   </head>
   <body>
@@ -69,8 +66,6 @@
 
       <div id="loading-box" class="loading-box hidden"><span class="spinner"></span><span id="loading-text">Launching bot...</span></div>
 
-      <div id="loading-box" class="loading-box hidden"><span class="spinner"></span><span id="loading-text">Launching bot...</span></div>
-
       <div id="msa-box" class="authbox hidden">
         <strong>Microsoft Sign-in required</strong>
         <p class="muted" id="msa-text"></p>
@@ -103,9 +98,6 @@
         for (const btn of els.profiles.querySelectorAll('button')) btn.disabled = active
         els.refreshBtn.disabled = active
         for (const input of els.form.querySelectorAll('input, select, button')) input.disabled = active
-        msaText: document.getElementById('msa-text'),
-        loadingBox: document.getElementById('loading-box'),
-        loadingText: document.getElementById('loading-text')
       }
 
       function updateIdentityLabel () {
@@ -128,18 +120,7 @@
         return div
       }
 
-      async function refreshProfiles () {
-        if (isLaunching) return
-        const res = await window.minefarmDesktop.listProfiles()
-        if (!res.ok) {
-          els.createMsg.textContent = res.error || 'Failed to list profiles'
-          return
-        }
-
-        els.profiles.innerHTML = ''
-        for (const p of res.profiles) els.profiles.appendChild(profileCard(p))
-        els.countMsg.textContent = `${res.profiles.length} profile(s)`
-
+      function bindProfileActions () {
         els.profiles.querySelectorAll('[data-launch]').forEach(btn => {
           btn.addEventListener('click', async () => {
             if (isLaunching) return
@@ -148,12 +129,6 @@
             const launchRes = await window.minefarmDesktop.launchProfile(id)
             if (!launchRes.ok) {
               setLaunchingState(false)
-            els.loadingText.textContent = `Launching ${btn.closest('.profile')?.querySelector('h3')?.textContent || 'bot'}...`
-            els.loadingBox.classList.remove('hidden')
-            const launchRes = await window.minefarmDesktop.launchProfile(id)
-            if (!launchRes.ok) {
-              btn.disabled = false
-              els.loadingBox.classList.add('hidden')
               els.createMsg.textContent = launchRes.error || 'Failed to launch profile'
               return
             }
@@ -180,11 +155,30 @@
         })
       }
 
+      function renderProfiles (profiles) {
+        els.profiles.innerHTML = ''
+        for (const p of profiles || []) els.profiles.appendChild(profileCard(p))
+        els.countMsg.textContent = `${(profiles || []).length} profile(s)`
+        bindProfileActions()
+        if (isLaunching) {
+          for (const btn of els.profiles.querySelectorAll('button')) btn.disabled = true
+        }
+      }
+
+      async function refreshProfiles () {
+        const res = await window.minefarmDesktop.listProfiles()
+        if (!res.ok) {
+          els.createMsg.textContent = res.error || 'Failed to list profiles'
+          return
+        }
+
+        renderProfiles(res.profiles)
+      }
+
       els.authSelect.addEventListener('change', updateIdentityLabel)
       els.refreshBtn.addEventListener('click', refreshProfiles)
 
       els.form.addEventListener('submit', async (event) => {
-        if (isLaunching) return
         event.preventDefault()
         const formData = new FormData(els.form)
         const payload = {
@@ -206,7 +200,8 @@
         els.form.reset()
         els.authSelect.value = 'microsoft'
         updateIdentityLabel()
-        await refreshProfiles()
+        if (Array.isArray(res.profiles)) renderProfiles(res.profiles)
+        else await refreshProfiles()
       })
 
       window.minefarmDesktop.onAuthCode(payload => {

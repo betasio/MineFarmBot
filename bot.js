@@ -377,7 +377,6 @@ function createBotEngine (config = validateConfig(loadConfig())) {
   function buildGridTasks (origin, layerIndex) {
     const y = origin.y + (layerIndex * 3)
     const size = Math.max(3, Number(cfg.farmSize) || 9)
-    const size = Math.max(3, Number(cfg.farmSize) || 9)
     const cells = []
     for (let dz = 0; dz < size; dz++) {
       const leftToRight = dz % 2 === 0
@@ -394,7 +393,6 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     const placementMode = String(cfg.placementMode || 'manual').toLowerCase()
     if (placementMode !== 'easy') return
 
-    const size = Math.max(3, Number(cfg.farmSize) || 9)
     const size = Math.max(3, Number(cfg.farmSize) || 9)
     const center = bot.entity.position.floored()
     const half = Math.floor(size / 2)

@@ -14,7 +14,6 @@ const DEFAULT_CONFIG = {
   layers: 18,
   buildDelayTicks: 3,
   farmSize: 9,
-  farmSize: 9,
   placementMode: 'manual',
   removeScaffold: false,
   safePlatform: { x: 0, y: 64, z: 0 },
@@ -75,7 +74,6 @@ function validateConfig (config) {
   return {
     ...config,
     layers: clampInteger(config.layers, 1, 128, DEFAULT_CONFIG.layers),
-    farmSize: normalizeOddSize(config.farmSize, DEFAULT_CONFIG.farmSize),
     farmSize: normalizeOddSize(config.farmSize, DEFAULT_CONFIG.farmSize),
     placementMode: String(config.placementMode || DEFAULT_CONFIG.placementMode).toLowerCase() === 'easy' ? 'easy' : 'manual',
     buildDelayTicks: clampInteger(config.buildDelayTicks, 1, 40, DEFAULT_CONFIG.buildDelayTicks),
@@ -153,7 +151,6 @@ module.exports = {
   DEFAULT_CONFIG,
   resolveConfigPath,
   clampInteger,
-  normalizeOddSize,
   normalizeOddSize,
   normalizeVersion,
   validateConfig,
