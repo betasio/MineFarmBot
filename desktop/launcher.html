@@ -23,6 +23,9 @@
       .loading-box { margin-top:10px; border:1px solid #4b6a93; background:#142035; padding:10px; border-radius:8px; }
       .spinner { display:inline-block; width:14px; height:14px; border:2px solid #8cb4f0; border-top-color:transparent; border-radius:50%; animation:spin 1s linear infinite; vertical-align:middle; margin-right:8px; }
       @keyframes spin { to { transform: rotate(360deg); } }
+      .loading-box { margin-top:10px; border:1px solid #4b6a93; background:#142035; padding:10px; border-radius:8px; }
+      .spinner { display:inline-block; width:14px; height:14px; border:2px solid #8cb4f0; border-top-color:transparent; border-radius:50%; animation:spin 1s linear infinite; vertical-align:middle; margin-right:8px; }
+      @keyframes spin { to { transform: rotate(360deg); } }
     </style>
   </head>
   <body>
@@ -66,6 +69,8 @@
 
       <div id="loading-box" class="loading-box hidden"><span class="spinner"></span><span id="loading-text">Launching bot...</span></div>
 
+      <div id="loading-box" class="loading-box hidden"><span class="spinner"></span><span id="loading-text">Launching bot...</span></div>
+
       <div id="msa-box" class="authbox hidden">
         <strong>Microsoft Sign-in required</strong>
         <p class="muted" id="msa-text"></p>
@@ -98,6 +103,9 @@
         for (const btn of els.profiles.querySelectorAll('button')) btn.disabled = active
         els.refreshBtn.disabled = active
         for (const input of els.form.querySelectorAll('input, select, button')) input.disabled = active
+        msaText: document.getElementById('msa-text'),
+        loadingBox: document.getElementById('loading-box'),
+        loadingText: document.getElementById('loading-text')
       }
 
       function updateIdentityLabel () {
@@ -140,6 +148,12 @@
             const launchRes = await window.minefarmDesktop.launchProfile(id)
             if (!launchRes.ok) {
               setLaunchingState(false)
+            els.loadingText.textContent = `Launching ${btn.closest('.profile')?.querySelector('h3')?.textContent || 'bot'}...`
+            els.loadingBox.classList.remove('hidden')
+            const launchRes = await window.minefarmDesktop.launchProfile(id)
+            if (!launchRes.ok) {
+              btn.disabled = false
+              els.loadingBox.classList.add('hidden')
               els.createMsg.textContent = launchRes.error || 'Failed to launch profile'
               return
             }

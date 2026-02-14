@@ -2,6 +2,7 @@
 
 const fs = require('fs')
 const path = require('path')
+const { PROFILE_SCHEMA_VERSION, migrateConfigFileIfNeeded } = require('./desktop/profileMigrations')
 
 const DEFAULT_CONFIG = {
   host: 'localhost',
@@ -12,6 +13,7 @@ const DEFAULT_CONFIG = {
   version: false,
   layers: 18,
   buildDelayTicks: 3,
+  farmSize: 9,
   farmSize: 9,
   placementMode: 'manual',
   removeScaffold: false,
@@ -74,6 +76,7 @@ function validateConfig (config) {
     ...config,
     layers: clampInteger(config.layers, 1, 128, DEFAULT_CONFIG.layers),
     farmSize: normalizeOddSize(config.farmSize, DEFAULT_CONFIG.farmSize),
+    farmSize: normalizeOddSize(config.farmSize, DEFAULT_CONFIG.farmSize),
     placementMode: String(config.placementMode || DEFAULT_CONFIG.placementMode).toLowerCase() === 'easy' ? 'easy' : 'manual',
     buildDelayTicks: clampInteger(config.buildDelayTicks, 1, 40, DEFAULT_CONFIG.buildDelayTicks),
     version: normalizeVersion(config.version),
@@ -125,11 +128,17 @@ function loadConfig () {
   }
 
   try {
-    const raw = fs.readFileSync(configPath, 'utf8')
-    const parsed = JSON.parse(raw)
+    const migrated = migrateConfigFileIfNeeded({
+      configPath,
+      defaultConfig: DEFAULT_CONFIG,
+      validateConfig
+    })
+    const parsed = migrated.config
+    if (!parsed) return DEFAULT_CONFIG
     return {
       ...DEFAULT_CONFIG,
       ...parsed,
+      schemaVersion: Number.isFinite(parsed.schemaVersion) ? parsed.schemaVersion : PROFILE_SCHEMA_VERSION,
       origin: { ...DEFAULT_CONFIG.origin, ...(parsed.origin || {}) },
       safePlatform: { ...DEFAULT_CONFIG.safePlatform, ...(parsed.safePlatform || {}) },
       gui: { ...DEFAULT_CONFIG.gui, ...(parsed.gui || {}) }
@@ -144,6 +153,7 @@ module.exports = {
   DEFAULT_CONFIG,
   resolveConfigPath,
   clampInteger,
+  normalizeOddSize,
   normalizeOddSize,
   normalizeVersion,
   validateConfig,
