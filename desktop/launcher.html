@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MineFarmBot Launcher</title>
+    <style>
+      body { margin:0; font-family: Inter, system-ui, sans-serif; background:#0b111a; color:#ecf4ff; }
+      .wrap { max-width: 1100px; margin: 0 auto; padding: 20px; }
+      .card { background:#172334; border:1px solid #29405d; border-radius:12px; padding:16px; margin-bottom:16px; }
+      h1,h2 { margin:0 0 10px; }
+      .grid { display:grid; grid-template-columns: repeat(3,minmax(200px,1fr)); gap:10px; }
+      label { display:flex; flex-direction:column; gap:6px; font-size:13px; color:#97abc8; }
+      input, select, button { border-radius:8px; border:1px solid #385074; background:#0d1521; color:#ecf4ff; padding:9px 10px; }
+      button { cursor:pointer; background:#1d2d42; }
+      .actions { display:flex; gap:10px; margin-top:12px; }
+      .profiles { display:grid; grid-template-columns: repeat(auto-fill, minmax(280px,1fr)); gap:10px; }
+      .profile { border:1px solid #355074; border-radius:10px; padding:10px; background:#111b2a; }
+      .muted { color:#97abc8; font-size:12px; }
+      .inline { display:flex; justify-content:space-between; gap:8px; align-items:center; }
+      .authbox { margin-top:10px; border:1px solid #5f8ed6; background:#1b2a42; padding:10px; border-radius:8px; }
+      .hidden { display:none; }
+      .loading-box { margin-top:10px; border:1px solid #4b6a93; background:#142035; padding:10px; border-radius:8px; }
+      .spinner { display:inline-block; width:14px; height:14px; border:2px solid #8cb4f0; border-top-color:transparent; border-radius:50%; animation:spin 1s linear infinite; vertical-align:middle; margin-right:8px; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="card">
+        <h1>MineFarmBot Desktop Launcher</h1>
+        <p class="muted">Create bot profiles per server, then launch one profile at a time. Each profile keeps separate progress/checkpoint.</p>
+      </div>
+
+      <div class="card">
+        <h2>Create Bot Profile</h2>
+        <form id="create-form">
+          <div class="grid">
+            <label>Profile Name *<input name="name" required placeholder="Example: Skyblock Main Bot"/></label>
+            <label>Auth Type *
+              <select name="auth" id="auth-select">
+                <option value="microsoft">microsoft</option>
+                <option value="offline">offline</option>
+              </select>
+            </label>
+            <label id="identity-label">Microsoft Email *<input name="identity" id="identity-input" required /></label>
+            <label>Server Host *<input name="host" required placeholder="play.example.net"/></label>
+            <label>Server Port *<input name="port" type="number" min="1" value="25565" required/></label>
+            <label>GUI Port<input name="guiPort" type="number" min="1024" value="8787"/></label>
+          </div>
+          <div class="actions">
+            <button type="submit">Create Profile</button>
+            <button type="button" id="refresh-btn">Refresh Profiles</button>
+          </div>
+        </form>
+        <p class="muted" id="create-msg"></p>
+      </div>
+
+      <div class="card">
+        <div class="inline">
+          <h2>Available Bots</h2>
+          <span class="muted" id="count-msg"></span>
+        </div>
+        <div id="profiles" class="profiles"></div>
+      </div>
+
+      <div id="loading-box" class="loading-box hidden"><span class="spinner"></span><span id="loading-text">Launching bot...</span></div>
+
+      <div id="msa-box" class="authbox hidden">
+        <strong>Microsoft Sign-in required</strong>
+        <p class="muted" id="msa-text"></p>
+      </div>
+    </div>
+
+    <script>
+      let isLaunching = false
+
+      const els = {
+        form: document.getElementById('create-form'),
+        authSelect: document.getElementById('auth-select'),
+        identityLabel: document.getElementById('identity-label'),
+        identityInput: document.getElementById('identity-input'),
+        createMsg: document.getElementById('create-msg'),
+        profiles: document.getElementById('profiles'),
+        refreshBtn: document.getElementById('refresh-btn'),
+        countMsg: document.getElementById('count-msg'),
+        msaBox: document.getElementById('msa-box'),
+        msaText: document.getElementById('msa-text'),
+        loadingBox: document.getElementById('loading-box'),
+        loadingText: document.getElementById('loading-text')
+      }
+
+
+      function setLaunchingState (active, label = 'Launching bot...') {
+        isLaunching = Boolean(active)
+        if (els.loadingText) els.loadingText.textContent = label
+        if (els.loadingBox) els.loadingBox.classList.toggle('hidden', !active)
+        for (const btn of els.profiles.querySelectorAll('button')) btn.disabled = active
+        els.refreshBtn.disabled = active
+        for (const input of els.form.querySelectorAll('input, select, button')) input.disabled = active
+      }
+
+      function updateIdentityLabel () {
+        const auth = els.authSelect.value
+        els.identityLabel.firstChild.textContent = auth === 'offline' ? 'Offline Username *' : 'Microsoft Email *'
+        els.identityInput.placeholder = auth === 'offline' ? 'BotName123' : 'you@example.com'
+      }
+
+      function profileCard (p) {
+        const checkpoint = p.checkpoint ? `Layer ${p.checkpoint.layer}, Cell ${p.checkpoint.cell}` : 'No checkpoint yet'
+        const div = document.createElement('div')
+        div.className = 'profile'
+        div.innerHTML = `
+          <h3 style="margin:0 0 6px">${p.name}</h3>
+          <p class="muted" style="margin:0 0 4px">Auth: ${p.auth} | Host: ${p.host || '--'}</p>
+          <p class="muted" style="margin:0 0 10px">User: ${p.username || '--'}</p>
+          <p class="muted" style="margin:0 0 10px">Progress: ${checkpoint}</p>
+          <div class="actions"><button data-launch="${p.id}">Launch Bot</button><button data-delete="${p.id}" style="background:#4a1f2a;border-color:#7a3347">Delete</button></div>
+        `
+        return div
+      }
+
+      async function refreshProfiles () {
+        if (isLaunching) return
+        const res = await window.minefarmDesktop.listProfiles()
+        if (!res.ok) {
+          els.createMsg.textContent = res.error || 'Failed to list profiles'
+          return
+        }
+
+        els.profiles.innerHTML = ''
+        for (const p of res.profiles) els.profiles.appendChild(profileCard(p))
+        els.countMsg.textContent = `${res.profiles.length} profile(s)`
+
+        els.profiles.querySelectorAll('[data-launch]').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            if (isLaunching) return
+            const id = btn.getAttribute('data-launch')
+            setLaunchingState(true, `Launching ${btn.closest('.profile')?.querySelector('h3')?.textContent || 'bot'}...`)
+            const launchRes = await window.minefarmDesktop.launchProfile(id)
+            if (!launchRes.ok) {
+              setLaunchingState(false)
+              els.createMsg.textContent = launchRes.error || 'Failed to launch profile'
+              return
+            }
+            els.createMsg.textContent = 'Bot launched. Loading GUI...'
+          })
+        })
+
+        els.profiles.querySelectorAll('[data-delete]').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            if (isLaunching) return
+            const id = btn.getAttribute('data-delete')
+            const confirmed = window.confirm('Delete this profile and its saved config/checkpoint?')
+            if (!confirmed) return
+            btn.disabled = true
+            const delRes = await window.minefarmDesktop.deleteProfile(id)
+            if (!delRes.ok) {
+              btn.disabled = false
+              els.createMsg.textContent = delRes.error || 'Failed to delete profile'
+              return
+            }
+            els.createMsg.textContent = 'Profile deleted.'
+            await refreshProfiles()
+          })
+        })
+      }
+
+      els.authSelect.addEventListener('change', updateIdentityLabel)
+      els.refreshBtn.addEventListener('click', refreshProfiles)
+
+      els.form.addEventListener('submit', async (event) => {
+        if (isLaunching) return
+        event.preventDefault()
+        const formData = new FormData(els.form)
+        const payload = {
+          name: String(formData.get('name') || '').trim(),
+          auth: String(formData.get('auth') || 'microsoft'),
+          identity: String(formData.get('identity') || '').trim(),
+          host: String(formData.get('host') || '').trim(),
+          port: Number(formData.get('port') || 25565),
+          guiPort: Number(formData.get('guiPort') || 8787)
+        }
+
+        const res = await window.minefarmDesktop.createProfile(payload)
+        if (!res.ok) {
+          els.createMsg.textContent = res.error || 'Failed to create profile'
+          return
+        }
+
+        els.createMsg.textContent = `Created profile: ${res.profile.name}`
+        els.form.reset()
+        els.authSelect.value = 'microsoft'
+        updateIdentityLabel()
+        await refreshProfiles()
+      })
+
+      window.minefarmDesktop.onAuthCode(payload => {
+        els.msaBox.classList.remove('hidden')
+        els.msaText.textContent = payload && payload.code
+          ? `Use code ${payload.code} at ${payload.url || 'https://www.microsoft.com/link'}`
+          : `Open ${payload && payload.url ? payload.url : 'https://www.microsoft.com/link'} to complete sign-in.`
+      })
+
+      updateIdentityLabel()
+      refreshProfiles().catch(err => { els.createMsg.textContent = err.message })
+    </script>
+  </body>
+</html>
