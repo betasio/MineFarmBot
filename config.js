@@ -13,11 +13,8 @@ const DEFAULT_CONFIG = {
   version: false,
   layers: 18,
   buildDelayTicks: 3,
-<<<<<<< codex/build-gui-for-minefarmbot-pfl97s
   farmSize: 9,
-=======
-  farmSize: 16,
->>>>>>> main
+  farmSize: 9,
   placementMode: 'manual',
   removeScaffold: false,
   safePlatform: { x: 0, y: 64, z: 0 },
@@ -51,7 +48,6 @@ function clampInteger (value, min, max, fallback) {
   return Math.max(min, Math.min(max, Math.floor(num)))
 }
 
-<<<<<<< codex/build-gui-for-minefarmbot-pfl97s
 function normalizeOddSize (value, fallback = DEFAULT_CONFIG.farmSize) {
   let size = clampInteger(value, 3, 63, fallback)
   if (size % 2 === 0) size += 1
@@ -59,8 +55,6 @@ function normalizeOddSize (value, fallback = DEFAULT_CONFIG.farmSize) {
   return size
 }
 
-=======
->>>>>>> main
 function normalizeVersion (value) {
   if (value == null || value === false) return false
   const raw = String(value).trim()
@@ -81,11 +75,8 @@ function validateConfig (config) {
   return {
     ...config,
     layers: clampInteger(config.layers, 1, 128, DEFAULT_CONFIG.layers),
-<<<<<<< codex/build-gui-for-minefarmbot-pfl97s
     farmSize: normalizeOddSize(config.farmSize, DEFAULT_CONFIG.farmSize),
-=======
-    farmSize: clampInteger(config.farmSize, 3, 64, DEFAULT_CONFIG.farmSize),
->>>>>>> main
+    farmSize: normalizeOddSize(config.farmSize, DEFAULT_CONFIG.farmSize),
     placementMode: String(config.placementMode || DEFAULT_CONFIG.placementMode).toLowerCase() === 'easy' ? 'easy' : 'manual',
     buildDelayTicks: clampInteger(config.buildDelayTicks, 1, 40, DEFAULT_CONFIG.buildDelayTicks),
     version: normalizeVersion(config.version),
@@ -162,10 +153,8 @@ module.exports = {
   DEFAULT_CONFIG,
   resolveConfigPath,
   clampInteger,
-<<<<<<< codex/build-gui-for-minefarmbot-pfl97s
   normalizeOddSize,
-=======
->>>>>>> main
+  normalizeOddSize,
   normalizeVersion,
   validateConfig,
   loadConfig

@@ -34,7 +34,6 @@ function jsonResponse (res, statusCode, payload) {
   res.end(JSON.stringify(payload))
 }
 
-<<<<<<< codex/build-gui-for-minefarmbot-pfl97s
 function normalizeOddFarmSize (value, fallback = 9) {
   let size = Math.floor(Number(value))
   if (!Number.isFinite(size)) size = fallback
@@ -44,8 +43,6 @@ function normalizeOddFarmSize (value, fallback = 9) {
   return size
 }
 
-=======
->>>>>>> main
 function getByPath (obj, pathStr) {
   return pathStr.split('.').reduce((acc, key) => (acc && Object.prototype.hasOwnProperty.call(acc, key) ? acc[key] : undefined), obj)
 }
@@ -77,11 +74,8 @@ function getMissingRequiredFields (config) {
 function derivePlacementFromConfig (config) {
   const next = { ...config }
   const placementMode = String(next.placementMode || 'manual').toLowerCase() === 'easy' ? 'easy' : 'manual'
-<<<<<<< codex/build-gui-for-minefarmbot-pfl97s
   const size = normalizeOddFarmSize(next.farmSize, 9)
-=======
-  const size = Math.max(3, Number(next.farmSize) || 16)
->>>>>>> main
+  const size = normalizeOddFarmSize(next.farmSize, 9)
   next.farmSize = size
 
   if (placementMode === 'manual') {
@@ -100,11 +94,8 @@ function derivePlacementFromConfig (config) {
 
       const spanX = Math.abs(bx - ax) + 1
       const spanZ = Math.abs(bz - az) + 1
-<<<<<<< codex/build-gui-for-minefarmbot-pfl97s
       const squareSize = normalizeOddFarmSize(Math.max(spanX, spanZ), 9)
-=======
-      const squareSize = Math.max(3, Math.min(64, Math.max(spanX, spanZ)))
->>>>>>> main
+      const squareSize = normalizeOddFarmSize(Math.max(spanX, spanZ), 9)
       const originX = Math.min(ax, bx)
       const originZ = Math.min(az, bz)
       const originY = ay
@@ -127,11 +118,8 @@ function derivePlacementFromConfig (config) {
 
 function enrichConfigForWizard (config) {
   const enriched = { ...config }
-<<<<<<< codex/build-gui-for-minefarmbot-pfl97s
   const size = normalizeOddFarmSize(enriched.farmSize, 9)
-=======
-  const size = Math.max(3, Number(enriched.farmSize) || 16)
->>>>>>> main
+  const size = normalizeOddFarmSize(enriched.farmSize, 9)
   const origin = enriched.origin || { x: 0, y: 64, z: 0 }
   enriched.manualCornerA = { x: origin.x, y: origin.y, z: origin.z }
   enriched.manualCornerB = { x: origin.x + (size - 1), y: origin.y, z: origin.z + (size - 1) }
@@ -205,8 +193,158 @@ function startUiServer ({ engine, cfg }) {
           return
         }
         body += chunk
-<<<<<<< codex/build-gui-for-minefarmbot-pfl97s
-=======
+      })
+
+      req.on('end', async () => {
+        let payload
+        try {
+          payload = body ? JSON.parse(body) : {}
+        } catch {
+          jsonResponse(res, 400, { ok: false, error: 'Invalid JSON payload' })
+          return
+        }
+
+        const action = String(payload.action || '').toLowerCase()
+        if (!action) {
+          jsonResponse(res, 400, { ok: false, error: 'Missing action' })
+          return
+        }
+
+        try {
+          if (action === 'start') {
+            await engine.startBuild()
+            jsonResponse(res, 200, { ok: true, action, accepted: true })
+            return
+          }
+
+          if (action === 'pause') {
+            const accepted = engine.pauseBuild()
+            jsonResponse(res, 200, { ok: accepted, action, accepted })
+            return
+          }
+
+          if (action === 'resume') {
+            const accepted = engine.resumeBuild()
+            jsonResponse(res, 200, { ok: accepted, action, accepted })
+            return
+          }
+
+          if (action === 'stop') {
+            const accepted = engine.stopBuild()
+            jsonResponse(res, 200, { ok: accepted, action, accepted })
+            return
+          }
+
+          jsonResponse(res, 400, { ok: false, error: `Unsupported action: ${action}` })
+        } catch (err) {
+          jsonResponse(res, 500, { ok: false, error: err.message })
+        }
+      })
+
+      req.on('error', () => {
+        if (!res.headersSent) jsonResponse(res, 400, { ok: false, error: 'Failed to read request body' })
+      })
+
+      return
+    }
+
+    if (req.method === 'GET' && reqUrl.pathname === '/config') {
+      const loaded = validateConfig(loadConfig())
+      const wizardConfig = enrichConfigForWizard(loaded)
+      jsonResponse(res, 200, {
+        ok: true,
+        config: wizardConfig,
+        requiredFields: getRequiredFields(loaded),
+        missingRequiredFields: getMissingRequiredFields(loaded)
+      })
+      return
+    }
+
+    if (req.method === 'POST' && reqUrl.pathname === '/config') {
+      let body = ''
+      let size = 0
+
+      req.on('data', chunk => {
+        size += chunk.length
+        if (size > MAX_CONTROL_PAYLOAD_BYTES * 8) {
+          jsonResponse(res, 413, { ok: false, error: 'Payload too large' })
+          req.destroy()
+          return
+        }
+        body += chunk
+      })
+
+      req.on('end', () => {
+        let payload
+        try {
+          payload = body ? JSON.parse(body) : {}
+        } catch {
+          jsonResponse(res, 400, { ok: false, error: 'Invalid JSON payload' })
+          return
+        }
+
+        const userConfig = payload.config
+        if (!userConfig || typeof userConfig !== 'object') {
+          jsonResponse(res, 400, { ok: false, error: 'Missing config object' })
+          return
+        }
+
+        try {
+          const baseConfig = loadConfig()
+          const mergedConfig = {
+            ...baseConfig,
+            ...userConfig,
+            origin: { ...(baseConfig.origin || {}), ...((userConfig && userConfig.origin) || {}) },
+            gui: { ...(baseConfig.gui || {}), ...((userConfig && userConfig.gui) || {}) },
+            refill: {
+              ...(baseConfig.refill || {}),
+              ...((userConfig && userConfig.refill) || {}),
+              thresholds: {
+                ...(((baseConfig.refill || {}).thresholds) || {}),
+                ...((((userConfig || {}).refill || {}).thresholds) || {})
+              },
+              targetStacks: {
+                ...(((baseConfig.refill || {}).targetStacks) || {}),
+                ...((((userConfig || {}).refill || {}).targetStacks) || {})
+              }
+            },
+            manualCornerA: { ...(baseConfig.manualCornerA || {}), ...((userConfig && userConfig.manualCornerA) || {}) },
+            manualCornerB: { ...(baseConfig.manualCornerB || {}), ...((userConfig && userConfig.manualCornerB) || {}) }
+          }
+
+          const validated = validateConfig(derivePlacementFromConfig(mergedConfig))
+          const missingRequiredFields = getMissingRequiredFields(validated)
+          if (missingRequiredFields.length > 0) {
+            jsonResponse(res, 400, {
+              ok: false,
+              error: 'Required configuration fields are missing.',
+              missingRequiredFields,
+              requiredFields: getRequiredFields(validated)
+            })
+            return
+          }
+
+          if (fs.existsSync(configPath)) {
+            try {
+              fs.copyFileSync(configPath, `${configPath}.bak`)
+            } catch {}
+          }
+
+          saveConfigToDisk(validated)
+          jsonResponse(res, 200, {
+            ok: true,
+            config: enrichConfigForWizard(validated),
+            requiredFields: getRequiredFields(validated),
+            missingRequiredFields: [],
+            message: 'Configuration saved. Restart bot process to apply connection-level changes.'
+          })
+        } catch (err) {
+          jsonResponse(res, 500, { ok: false, error: err.message })
+        }
+      })
+
+      req.on('error', () => {
+        if (!res.headersSent) jsonResponse(res, 400, { ok: false, error: 'Failed to read request body' })
       })
 
       req.on('end', async () => {
@@ -383,190 +521,10 @@ function startUiServer ({ engine, cfg }) {
           'Cache-Control': reqUrl.pathname.startsWith('/assets/') ? 'public, max-age=300' : 'no-store'
         })
         fs.createReadStream(fullPath).pipe(res)
->>>>>>> main
-      })
-
-      req.on('end', async () => {
-        let payload
-        try {
-          payload = body ? JSON.parse(body) : {}
-        } catch {
-          jsonResponse(res, 400, { ok: false, error: 'Invalid JSON payload' })
-          return
-        }
-
-        const action = String(payload.action || '').toLowerCase()
-        if (!action) {
-          jsonResponse(res, 400, { ok: false, error: 'Missing action' })
-          return
-        }
-
-        try {
-          if (action === 'start') {
-            await engine.startBuild()
-            jsonResponse(res, 200, { ok: true, action, accepted: true })
-            return
-          }
-
-          if (action === 'pause') {
-            const accepted = engine.pauseBuild()
-            jsonResponse(res, 200, { ok: accepted, action, accepted })
-            return
-          }
-
-          if (action === 'resume') {
-            const accepted = engine.resumeBuild()
-            jsonResponse(res, 200, { ok: accepted, action, accepted })
-            return
-          }
-
-          if (action === 'stop') {
-            const accepted = engine.stopBuild()
-            jsonResponse(res, 200, { ok: accepted, action, accepted })
-            return
-          }
-
-          jsonResponse(res, 400, { ok: false, error: `Unsupported action: ${action}` })
-        } catch (err) {
-          jsonResponse(res, 500, { ok: false, error: err.message })
-        }
-      })
-
-      req.on('error', () => {
-        if (!res.headersSent) jsonResponse(res, 400, { ok: false, error: 'Failed to read request body' })
-      })
-
-      return
-    }
-
-<<<<<<< codex/build-gui-for-minefarmbot-pfl97s
-    if (req.method === 'GET' && reqUrl.pathname === '/config') {
-      const loaded = validateConfig(loadConfig())
-      const wizardConfig = enrichConfigForWizard(loaded)
-      jsonResponse(res, 200, {
-        ok: true,
-        config: wizardConfig,
-        requiredFields: getRequiredFields(loaded),
-        missingRequiredFields: getMissingRequiredFields(loaded)
       })
       return
     }
 
-    if (req.method === 'POST' && reqUrl.pathname === '/config') {
-      let body = ''
-      let size = 0
-
-      req.on('data', chunk => {
-        size += chunk.length
-        if (size > MAX_CONTROL_PAYLOAD_BYTES * 8) {
-          jsonResponse(res, 413, { ok: false, error: 'Payload too large' })
-          req.destroy()
-          return
-        }
-        body += chunk
-      })
-
-      req.on('end', () => {
-        let payload
-        try {
-          payload = body ? JSON.parse(body) : {}
-        } catch {
-          jsonResponse(res, 400, { ok: false, error: 'Invalid JSON payload' })
-          return
-        }
-
-        const userConfig = payload.config
-        if (!userConfig || typeof userConfig !== 'object') {
-          jsonResponse(res, 400, { ok: false, error: 'Missing config object' })
-          return
-        }
-
-        try {
-          const baseConfig = loadConfig()
-          const mergedConfig = {
-            ...baseConfig,
-            ...userConfig,
-            origin: { ...(baseConfig.origin || {}), ...((userConfig && userConfig.origin) || {}) },
-            gui: { ...(baseConfig.gui || {}), ...((userConfig && userConfig.gui) || {}) },
-            refill: {
-              ...(baseConfig.refill || {}),
-              ...((userConfig && userConfig.refill) || {}),
-              thresholds: {
-                ...(((baseConfig.refill || {}).thresholds) || {}),
-                ...((((userConfig || {}).refill || {}).thresholds) || {})
-              },
-              targetStacks: {
-                ...(((baseConfig.refill || {}).targetStacks) || {}),
-                ...((((userConfig || {}).refill || {}).targetStacks) || {})
-              }
-            },
-            manualCornerA: { ...(baseConfig.manualCornerA || {}), ...((userConfig && userConfig.manualCornerA) || {}) },
-            manualCornerB: { ...(baseConfig.manualCornerB || {}), ...((userConfig && userConfig.manualCornerB) || {}) }
-          }
-
-          const validated = validateConfig(derivePlacementFromConfig(mergedConfig))
-          const missingRequiredFields = getMissingRequiredFields(validated)
-          if (missingRequiredFields.length > 0) {
-            jsonResponse(res, 400, {
-              ok: false,
-              error: 'Required configuration fields are missing.',
-              missingRequiredFields,
-              requiredFields: getRequiredFields(validated)
-            })
-            return
-          }
-
-          if (fs.existsSync(configPath)) {
-            try {
-              fs.copyFileSync(configPath, `${configPath}.bak`)
-            } catch {}
-          }
-
-          saveConfigToDisk(validated)
-          jsonResponse(res, 200, {
-            ok: true,
-            config: enrichConfigForWizard(validated),
-            requiredFields: getRequiredFields(validated),
-            missingRequiredFields: [],
-            message: 'Configuration saved. Restart bot process to apply connection-level changes.'
-          })
-        } catch (err) {
-          jsonResponse(res, 500, { ok: false, error: err.message })
-        }
-      })
-
-      req.on('error', () => {
-        if (!res.headersSent) jsonResponse(res, 400, { ok: false, error: 'Failed to read request body' })
-      })
-      return
-    }
-
-    if (req.method === 'GET' && (reqUrl.pathname === '/' || reqUrl.pathname.startsWith('/assets/'))) {
-      const relativePath = reqUrl.pathname === '/' ? '/index.html' : reqUrl.pathname
-      const fullPath = path.resolve(publicDir, relativePath.replace(/^\//, ''))
-
-      if (!fullPath.startsWith(publicDir)) {
-        jsonResponse(res, 403, { error: 'Forbidden' })
-        return
-      }
-
-      fs.stat(fullPath, (err, stat) => {
-        if (err || !stat.isFile()) {
-          jsonResponse(res, 404, { error: 'Not Found' })
-          return
-        }
-
-        res.writeHead(200, {
-          'Content-Type': guessContentType(fullPath),
-          'Cache-Control': reqUrl.pathname.startsWith('/assets/') ? 'public, max-age=300' : 'no-store'
-        })
-        fs.createReadStream(fullPath).pipe(res)
-      })
-      return
-    }
-
-=======
->>>>>>> main
     jsonResponse(res, 404, { error: 'Not Found' })
   })
 

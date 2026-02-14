@@ -20,12 +20,12 @@
       .inline { display:flex; justify-content:space-between; gap:8px; align-items:center; }
       .authbox { margin-top:10px; border:1px solid #5f8ed6; background:#1b2a42; padding:10px; border-radius:8px; }
       .hidden { display:none; }
-<<<<<<< codex/build-gui-for-minefarmbot-pfl97s
       .loading-box { margin-top:10px; border:1px solid #4b6a93; background:#142035; padding:10px; border-radius:8px; }
       .spinner { display:inline-block; width:14px; height:14px; border:2px solid #8cb4f0; border-top-color:transparent; border-radius:50%; animation:spin 1s linear infinite; vertical-align:middle; margin-right:8px; }
       @keyframes spin { to { transform: rotate(360deg); } }
-=======
->>>>>>> main
+      .loading-box { margin-top:10px; border:1px solid #4b6a93; background:#142035; padding:10px; border-radius:8px; }
+      .spinner { display:inline-block; width:14px; height:14px; border:2px solid #8cb4f0; border-top-color:transparent; border-radius:50%; animation:spin 1s linear infinite; vertical-align:middle; margin-right:8px; }
+      @keyframes spin { to { transform: rotate(360deg); } }
     </style>
   </head>
   <body>
@@ -67,11 +67,10 @@
         <div id="profiles" class="profiles"></div>
       </div>
 
-<<<<<<< codex/build-gui-for-minefarmbot-pfl97s
       <div id="loading-box" class="loading-box hidden"><span class="spinner"></span><span id="loading-text">Launching bot...</span></div>
 
-=======
->>>>>>> main
+      <div id="loading-box" class="loading-box hidden"><span class="spinner"></span><span id="loading-text">Launching bot...</span></div>
+
       <div id="msa-box" class="authbox hidden">
         <strong>Microsoft Sign-in required</strong>
         <p class="muted" id="msa-text"></p>
@@ -79,6 +78,8 @@
     </div>
 
     <script>
+      let isLaunching = false
+
       const els = {
         form: document.getElementById('create-form'),
         authSelect: document.getElementById('auth-select'),
@@ -89,13 +90,22 @@
         refreshBtn: document.getElementById('refresh-btn'),
         countMsg: document.getElementById('count-msg'),
         msaBox: document.getElementById('msa-box'),
-<<<<<<< codex/build-gui-for-minefarmbot-pfl97s
         msaText: document.getElementById('msa-text'),
         loadingBox: document.getElementById('loading-box'),
         loadingText: document.getElementById('loading-text')
-=======
-        msaText: document.getElementById('msa-text')
->>>>>>> main
+      }
+
+
+      function setLaunchingState (active, label = 'Launching bot...') {
+        isLaunching = Boolean(active)
+        if (els.loadingText) els.loadingText.textContent = label
+        if (els.loadingBox) els.loadingBox.classList.toggle('hidden', !active)
+        for (const btn of els.profiles.querySelectorAll('button')) btn.disabled = active
+        els.refreshBtn.disabled = active
+        for (const input of els.form.querySelectorAll('input, select, button')) input.disabled = active
+        msaText: document.getElementById('msa-text'),
+        loadingBox: document.getElementById('loading-box'),
+        loadingText: document.getElementById('loading-text')
       }
 
       function updateIdentityLabel () {
@@ -119,6 +129,7 @@
       }
 
       async function refreshProfiles () {
+        if (isLaunching) return
         const res = await window.minefarmDesktop.listProfiles()
         if (!res.ok) {
           els.createMsg.textContent = res.error || 'Failed to list profiles'
@@ -131,9 +142,12 @@
 
         els.profiles.querySelectorAll('[data-launch]').forEach(btn => {
           btn.addEventListener('click', async () => {
+            if (isLaunching) return
             const id = btn.getAttribute('data-launch')
-            btn.disabled = true
-<<<<<<< codex/build-gui-for-minefarmbot-pfl97s
+            setLaunchingState(true, `Launching ${btn.closest('.profile')?.querySelector('h3')?.textContent || 'bot'}...`)
+            const launchRes = await window.minefarmDesktop.launchProfile(id)
+            if (!launchRes.ok) {
+              setLaunchingState(false)
             els.loadingText.textContent = `Launching ${btn.closest('.profile')?.querySelector('h3')?.textContent || 'bot'}...`
             els.loadingBox.classList.remove('hidden')
             const launchRes = await window.minefarmDesktop.launchProfile(id)
@@ -144,18 +158,12 @@
               return
             }
             els.createMsg.textContent = 'Bot launched. Loading GUI...'
-=======
-            const launchRes = await window.minefarmDesktop.launchProfile(id)
-            if (!launchRes.ok) {
-              btn.disabled = false
-              els.createMsg.textContent = launchRes.error || 'Failed to launch profile'
-            }
->>>>>>> main
           })
         })
 
         els.profiles.querySelectorAll('[data-delete]').forEach(btn => {
           btn.addEventListener('click', async () => {
+            if (isLaunching) return
             const id = btn.getAttribute('data-delete')
             const confirmed = window.confirm('Delete this profile and its saved config/checkpoint?')
             if (!confirmed) return
@@ -176,6 +184,7 @@
       els.refreshBtn.addEventListener('click', refreshProfiles)
 
       els.form.addEventListener('submit', async (event) => {
+        if (isLaunching) return
         event.preventDefault()
         const formData = new FormData(els.form)
         const payload = {
