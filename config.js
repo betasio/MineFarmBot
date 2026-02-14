@@ -2,6 +2,7 @@
 
 const fs = require('fs')
 const path = require('path')
+const { PROFILE_SCHEMA_VERSION, migrateConfigFileIfNeeded } = require('./desktop/profileMigrations')
 
 const DEFAULT_CONFIG = {
   host: 'localhost',
@@ -12,7 +13,11 @@ const DEFAULT_CONFIG = {
   version: false,
   layers: 18,
   buildDelayTicks: 3,
+<<<<<<< codex/build-gui-for-minefarmbot-pfl97s
   farmSize: 9,
+=======
+  farmSize: 16,
+>>>>>>> main
   placementMode: 'manual',
   removeScaffold: false,
   safePlatform: { x: 0, y: 64, z: 0 },
@@ -46,6 +51,7 @@ function clampInteger (value, min, max, fallback) {
   return Math.max(min, Math.min(max, Math.floor(num)))
 }
 
+<<<<<<< codex/build-gui-for-minefarmbot-pfl97s
 function normalizeOddSize (value, fallback = DEFAULT_CONFIG.farmSize) {
   let size = clampInteger(value, 3, 63, fallback)
   if (size % 2 === 0) size += 1
@@ -53,6 +59,8 @@ function normalizeOddSize (value, fallback = DEFAULT_CONFIG.farmSize) {
   return size
 }
 
+=======
+>>>>>>> main
 function normalizeVersion (value) {
   if (value == null || value === false) return false
   const raw = String(value).trim()
@@ -73,7 +81,11 @@ function validateConfig (config) {
   return {
     ...config,
     layers: clampInteger(config.layers, 1, 128, DEFAULT_CONFIG.layers),
+<<<<<<< codex/build-gui-for-minefarmbot-pfl97s
     farmSize: normalizeOddSize(config.farmSize, DEFAULT_CONFIG.farmSize),
+=======
+    farmSize: clampInteger(config.farmSize, 3, 64, DEFAULT_CONFIG.farmSize),
+>>>>>>> main
     placementMode: String(config.placementMode || DEFAULT_CONFIG.placementMode).toLowerCase() === 'easy' ? 'easy' : 'manual',
     buildDelayTicks: clampInteger(config.buildDelayTicks, 1, 40, DEFAULT_CONFIG.buildDelayTicks),
     version: normalizeVersion(config.version),
@@ -125,11 +137,17 @@ function loadConfig () {
   }
 
   try {
-    const raw = fs.readFileSync(configPath, 'utf8')
-    const parsed = JSON.parse(raw)
+    const migrated = migrateConfigFileIfNeeded({
+      configPath,
+      defaultConfig: DEFAULT_CONFIG,
+      validateConfig
+    })
+    const parsed = migrated.config
+    if (!parsed) return DEFAULT_CONFIG
     return {
       ...DEFAULT_CONFIG,
       ...parsed,
+      schemaVersion: Number.isFinite(parsed.schemaVersion) ? parsed.schemaVersion : PROFILE_SCHEMA_VERSION,
       origin: { ...DEFAULT_CONFIG.origin, ...(parsed.origin || {}) },
       safePlatform: { ...DEFAULT_CONFIG.safePlatform, ...(parsed.safePlatform || {}) },
       gui: { ...DEFAULT_CONFIG.gui, ...(parsed.gui || {}) }
@@ -144,7 +162,10 @@ module.exports = {
   DEFAULT_CONFIG,
   resolveConfigPath,
   clampInteger,
+<<<<<<< codex/build-gui-for-minefarmbot-pfl97s
   normalizeOddSize,
+=======
+>>>>>>> main
   normalizeVersion,
   validateConfig,
   loadConfig

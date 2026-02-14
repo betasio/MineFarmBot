@@ -20,9 +20,12 @@
       .inline { display:flex; justify-content:space-between; gap:8px; align-items:center; }
       .authbox { margin-top:10px; border:1px solid #5f8ed6; background:#1b2a42; padding:10px; border-radius:8px; }
       .hidden { display:none; }
+<<<<<<< codex/build-gui-for-minefarmbot-pfl97s
       .loading-box { margin-top:10px; border:1px solid #4b6a93; background:#142035; padding:10px; border-radius:8px; }
       .spinner { display:inline-block; width:14px; height:14px; border:2px solid #8cb4f0; border-top-color:transparent; border-radius:50%; animation:spin 1s linear infinite; vertical-align:middle; margin-right:8px; }
       @keyframes spin { to { transform: rotate(360deg); } }
+=======
+>>>>>>> main
     </style>
   </head>
   <body>
@@ -64,8 +67,11 @@
         <div id="profiles" class="profiles"></div>
       </div>
 
+<<<<<<< codex/build-gui-for-minefarmbot-pfl97s
       <div id="loading-box" class="loading-box hidden"><span class="spinner"></span><span id="loading-text">Launching bot...</span></div>
 
+=======
+>>>>>>> main
       <div id="msa-box" class="authbox hidden">
         <strong>Microsoft Sign-in required</strong>
         <p class="muted" id="msa-text"></p>
@@ -83,9 +89,13 @@
         refreshBtn: document.getElementById('refresh-btn'),
         countMsg: document.getElementById('count-msg'),
         msaBox: document.getElementById('msa-box'),
+<<<<<<< codex/build-gui-for-minefarmbot-pfl97s
         msaText: document.getElementById('msa-text'),
         loadingBox: document.getElementById('loading-box'),
         loadingText: document.getElementById('loading-text')
+=======
+        msaText: document.getElementById('msa-text')
+>>>>>>> main
       }
 
       function updateIdentityLabel () {
@@ -123,6 +133,7 @@
           btn.addEventListener('click', async () => {
             const id = btn.getAttribute('data-launch')
             btn.disabled = true
+<<<<<<< codex/build-gui-for-minefarmbot-pfl97s
             els.loadingText.textContent = `Launching ${btn.closest('.profile')?.querySelector('h3')?.textContent || 'bot'}...`
             els.loadingBox.classList.remove('hidden')
             const launchRes = await window.minefarmDesktop.launchProfile(id)
@@ -133,6 +144,13 @@
               return
             }
             els.createMsg.textContent = 'Bot launched. Loading GUI...'
+=======
+            const launchRes = await window.minefarmDesktop.launchProfile(id)
+            if (!launchRes.ok) {
+              btn.disabled = false
+              els.createMsg.textContent = launchRes.error || 'Failed to launch profile'
+            }
+>>>>>>> main
           })
         })
 
