@@ -1,13 +1,23 @@
 'use strict'
 
 function createInventoryManager ({ getBot, cfg }) {
-  function itemCountByName (name) {
+  function getInventoryItems () {
     const bot = getBot()
-    return bot.inventory.items().filter(i => i.name === name).reduce((sum, i) => sum + i.count, 0)
+    if (!bot || !bot.inventory || typeof bot.inventory.items !== 'function') return []
+    return bot.inventory.items()
+  }
+
+  function itemCountByName (name) {
+    const items = getInventoryItems()
+    return items.filter(i => i.name === name).reduce((sum, i) => sum + i.count, 0)
   }
 
   async function equipItem (itemName, destination = 'hand') {
     const bot = getBot()
+    if (!bot || !bot.inventory || typeof bot.inventory.items !== 'function') {
+      throw new Error(`Cannot equip ${itemName}: bot inventory is unavailable`)
+    }
+
     const item = bot.inventory.items().find(i => i.name === itemName)
     if (!item) {
       throw new Error(`Missing inventory item: ${itemName}`)
@@ -49,16 +59,11 @@ function createInventoryManager ({ getBot, cfg }) {
   }
 
   function getMaterialCounts () {
-    const bot = getBot()
     const thresholds = cfg && cfg.refill ? cfg.refill.thresholds : null
     const items = {}
     const low = {}
 
-    if (!bot) {
-      return { items, thresholds, low }
-    }
-
-    const tracked = thresholds ? Object.keys(thresholds) : []
+    const tracked = thresholds ? Object.keys(thresholds) : ['sand', 'cactus', 'string', 'cobblestone']
     for (const name of tracked) {
       const count = itemCountByName(name)
       items[name] = count
