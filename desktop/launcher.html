@@ -166,13 +166,17 @@
       }
 
       async function refreshProfiles () {
-        const res = await window.minefarmDesktop.listProfiles()
-        if (!res.ok) {
-          els.createMsg.textContent = res.error || 'Failed to list profiles'
-          return
-        }
+        try {
+          const res = await window.minefarmDesktop.listProfiles()
+          if (!res.ok) {
+            els.createMsg.textContent = res.error || 'Failed to list profiles'
+            return
+          }
 
-        renderProfiles(res.profiles)
+          renderProfiles(res.profiles)
+        } catch (err) {
+          els.createMsg.textContent = err && err.message ? err.message : String(err)
+        }
       }
 
       els.authSelect.addEventListener('change', updateIdentityLabel)
@@ -212,6 +216,7 @@
       })
 
       updateIdentityLabel()
+      setLaunchingState(false)
       refreshProfiles().catch(err => { els.createMsg.textContent = err.message })
     </script>
   </body>

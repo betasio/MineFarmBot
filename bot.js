@@ -432,6 +432,34 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     if (isBlockName(below, 'sand')) throw new Error('Safety violation: bot stood on sand')
   }
 
+
+  function expectedPlacedBlockName (itemName) {
+    if (itemName === 'string') return 'tripwire'
+    return itemName
+  }
+
+  function isPlacementEventTimeout (err) {
+    const msg = err && err.message ? String(err.message) : String(err || '')
+    return msg.includes('blockUpdate:') && msg.includes('did not fire within timeout')
+  }
+
+  function doesBlockMatchPlacedItem (block, itemName) {
+    if (!block) return false
+    const expected = expectedPlacedBlockName(itemName)
+    if (expected === 'tripwire') return block.name === 'tripwire' || block.name === 'string'
+    return block.name === expected
+  }
+
+  async function recoverPlacementFromWorldState (referencePos, faceVec, itemName) {
+    const targetPos = referencePos.offset(faceVec.x, faceVec.y, faceVec.z)
+    for (let i = 0; i < 12; i++) {
+      const block = bot.blockAt(targetPos)
+      if (doesBlockMatchPlacedItem(block, itemName)) return true
+      await sleepTicks(2)
+    }
+    return false
+  }
+
   async function placeBlockByName (referencePos, faceVec, itemName) {
     if (inventory.itemCountByName(itemName) <= 0) {
       throw new Error(`Insufficient inventory item during placement: ${itemName}`)
@@ -442,7 +470,17 @@ function createBotEngine (config = validateConfig(loadConfig())) {
       await inventory.equipItem(itemName)
       const reference = requireLoaded(referencePos)
       await bot.lookAt(reference.position.offset(0.5, 0.5, 0.5), true)
-      await bot.placeBlock(reference, faceVec)
+      try {
+        await bot.placeBlock(reference, faceVec)
+      } catch (err) {
+        if (isPlacementEventTimeout(err)) {
+          const recovered = await recoverPlacementFromWorldState(reference.position, faceVec, itemName)
+          if (!recovered) throw err
+          warn(`Placement timeout recovered by world-state check for ${itemName} at ${reference.position.offset(faceVec.x, faceVec.y, faceVec.z).toString()}`)
+        } else {
+          throw err
+        }
+      }
       await sleepTicks(cfg.buildDelayTicks + (lagMode ? 2 : 0))
     } finally {
       humanizer.setBusyPlacing(false)
