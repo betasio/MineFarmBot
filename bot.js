@@ -322,6 +322,22 @@ function createBotEngine (config = validateConfig(loadConfig())) {
     return Boolean(block && block.boundingBox === 'block' && block.name !== 'sand')
   }
 
+  function resolveSafePlatformYFromCenter (center) {
+    const centerBlock = bot.blockAt(new Vec3(center.x, center.y, center.z))
+    const belowCenter = bot.blockAt(new Vec3(center.x, center.y - 1, center.z))
+    const belowSolid = belowCenter && belowCenter.boundingBox === 'block' && belowCenter.name !== 'sand'
+    const centerSolid = centerBlock && centerBlock.boundingBox === 'block' && centerBlock.name !== 'sand'
+    if (belowSolid) return center.y
+    if (centerSolid) return center.y + 1
+
+    for (let dy = 2; dy <= 6; dy++) {
+      const candidate = bot.blockAt(new Vec3(center.x, center.y - dy, center.z))
+      if (candidate && candidate.boundingBox === 'block' && candidate.name !== 'sand') return center.y - dy + 1
+    }
+
+    return center.y
+  }
+
   async function waitForBlockName (pos, expectedName, attempts = 8, delayTicks = 1) {
     let lastBlock = null
     for (let i = 0; i < attempts; i++) {
@@ -402,17 +418,13 @@ function createBotEngine (config = validateConfig(loadConfig())) {
       z: center.z - half
     }
 
-    let safeY = center.y
-    const centerBlock = bot.blockAt(new Vec3(center.x, center.y, center.z))
-    const belowCenter = bot.blockAt(new Vec3(center.x, center.y - 1, center.z))
-    const belowSolid = belowCenter && belowCenter.boundingBox === 'block' && belowCenter.name !== 'sand'
-    const centerSolid = centerBlock && centerBlock.boundingBox === 'block' && centerBlock.name !== 'sand'
-    if (!belowSolid && centerSolid) safeY = center.y + 1
+    const safeY = resolveSafePlatformYFromCenter(center)
 
     cfg.origin = origin
     cfg.safePlatform = { x: center.x, y: safeY, z: center.z }
+    cfg.spine = { x: center.x, z: center.z }
 
-    log(`Easy placement enabled: center=${center.x},${center.y},${center.z} size=${size}x${size} -> origin=${origin.x},${origin.y},${origin.z} safePlatform=${cfg.safePlatform.x},${cfg.safePlatform.y},${cfg.safePlatform.z}`)
+    log(`Easy placement enabled: center=${center.x},${center.y},${center.z} size=${size}x${size} -> origin=${origin.x},${origin.y},${origin.z} safePlatform=${cfg.safePlatform.x},${cfg.safePlatform.y},${cfg.safePlatform.z} spine=${cfg.spine.x},${cfg.spine.z}`)
   }
 
   const chooseScaffoldPos = (sandPos, xOffset) => sandPos.offset(xOffset, 0, 0)
@@ -490,15 +502,26 @@ function createBotEngine (config = validateConfig(loadConfig())) {
   }
 
   async function ensureVerticalSpine (origin, layerIndex) {
-    const spineX = origin.x - 2
-    const spineZ = origin.z
+    const spineX = cfg.spine && Number.isFinite(Number(cfg.spine.x)) ? Math.floor(Number(cfg.spine.x)) : (origin.x - 2)
+    const spineZ = cfg.spine && Number.isFinite(Number(cfg.spine.z)) ? Math.floor(Number(cfg.spine.z)) : origin.z
     const baseY = origin.y - 1
     const targetY = origin.y + (layerIndex * 3) - 1
 
     const basePos = new Vec3(spineX, baseY, spineZ)
-    const baseBlock = requireLoaded(basePos)
+    let baseBlock = requireLoaded(basePos)
     if (!baseBlock || baseBlock.boundingBox !== 'block') {
-      throw new Error(`Vertical spine base missing at ${basePos.toString()}. Place a starter cobblestone block there before running.`)
+      const support = requireLoaded(basePos.offset(0, -1, 0))
+      if (!support || support.boundingBox !== 'block') {
+        throw new Error(`Vertical spine base missing at ${basePos.toString()} and no support found below for auto-placement.`)
+      }
+      await bot.pathfinder.goto(new goals.GoalGetToBlock(basePos.x, basePos.y + 1, basePos.z))
+      await placeBlockByName(basePos.offset(0, -1, 0), new Vec3(0, 1, 0), 'cobblestone')
+      const placedBase = await waitForBlockName(basePos, 'cobblestone', 16, 2)
+      if (!placedBase || placedBase.boundingBox !== 'block') {
+        throw new Error(`Auto-placement failed for vertical spine base at ${basePos.toString()}`)
+      }
+      baseBlock = placedBase
+      log(`Auto-placed vertical spine base at ${basePos.toString()}`)
     }
 
     let highestConfirmedY = baseY
