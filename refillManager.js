@@ -28,7 +28,8 @@ function createRefillManager ({ getBot, cfg, goals, itemCountByName, hasRequired
   }
 
   function needsRefillByThreshold () {
-    if (!cfg.refill.enabled) return false
+    const bot = getBot()
+    if (!cfg.refill.enabled || !bot || !bot.inventory) return false
     const t = cfg.refill.thresholds
     return itemCountByName('sand') < t.sand ||
       itemCountByName('cactus') < t.cactus ||
@@ -39,12 +40,14 @@ function createRefillManager ({ getBot, cfg, goals, itemCountByName, hasRequired
   
 function getItemStackSize (itemName) {
   const bot = getBot()
+  if (!bot || !bot.registry || !bot.registry.itemsByName) return 64
   const itemInfo = bot.registry.itemsByName[itemName]
   return itemInfo && Number.isFinite(itemInfo.stackSize) ? itemInfo.stackSize : 64
 }
 
 function freeSpaceForItem (itemName) {
   const bot = getBot()
+  if (!bot || !bot.inventory || !Array.isArray(bot.inventory.slots)) return 0
   const stackSize = getItemStackSize(itemName)
   let free = 0
 
